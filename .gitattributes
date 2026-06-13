@@ -1,0 +1,6 @@
+# Normalize line endings. Shell scripts MUST stay LF so they run on Linux CI runners.
+* text=auto
+*.sh text eol=lf
+*.ts text eol=lf
+*.yml text eol=lf
+*.sql text eol=lf

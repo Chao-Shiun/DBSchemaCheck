@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "toolbox": {
+      "command": "./toolbox",
+      "args": ["--prebuilt", "postgres", "--stdio"]
+    }
+  }
+}

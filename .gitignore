@@ -1,0 +1,22 @@
+# .NET
+bin/
+obj/
+
+# CI runtime artifacts (never commit these)
+toolbox
+pr.diff
+verdict.json
+ci/mcp-config.runtime.json
+
+# Node / Supabase
+node_modules/
+.env
+.env.local
+supabase/.temp/
+
+# Local setup values (filled by you, never commit)
+scripts/.env.setup
+
+# OS
+.DS_Store
+Thumbs.db

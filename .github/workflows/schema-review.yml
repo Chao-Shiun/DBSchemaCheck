@@ -1,0 +1,138 @@
+name: DB Schema Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [master]
+  repository_dispatch:
+    types: [schema-approval]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+
+env:
+  TOOLBOX_VERSION: "1.4.0"
+
+jobs:
+  review:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    env:
+      # MCP Toolbox prebuilt postgres reads the connection from these env vars.
+      # The MCP child process inherits them; no secrets are written to disk.
+      POSTGRES_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+      POSTGRES_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+      POSTGRES_DATABASE: ${{ secrets.SUPABASE_DB_NAME }}
+      POSTGRES_USER: ${{ secrets.SUPABASE_DB_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      POSTGRES_QUERY_PARAMS: "sslmode=require"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve metadata
+        id: meta
+        run: |
+          TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "${GITHUB_REF_NAME}")"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "project=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - name: Download MCP Toolbox
+        run: |
+          curl -fsSL -o toolbox "https://storage.googleapis.com/mcp-toolbox-for-databases/v${TOOLBOX_VERSION}/linux/amd64/toolbox"
+          chmod +x toolbox
+
+      - name: Generate diff of changed source files
+        run: |
+          BASE_REF="${{ github.base_ref || 'master' }}"
+          git fetch origin "${BASE_REF}" || true
+          if git rev-parse "origin/${BASE_REF}" >/dev/null 2>&1; then
+            git diff "origin/${BASE_REF}...HEAD" -- 'src/**' > pr.diff || true
+          else
+            git diff HEAD~1 -- 'src/**' > pr.diff || true
+          fi
+          echo "----- changed files -----"
+          cat pr.diff | head -n 200 || true
+
+      - name: AI schema review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read the file ci/review-prompt.md and follow it exactly.
+            The diff of changed source files is in pr.diff (read it with the Read tool).
+            Use the toolbox MCP tools to introspect the live PostgreSQL schema, then write
+            your verdict to verdict.json at the repository root as the instructions specify.
+          claude_args: >-
+            --mcp-config ci/mcp-config.json
+            --allowedTools "mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
+
+      - name: Evaluate verdict and decide gate
+        id: gate
+        run: |
+          if [ ! -f verdict.json ]; then
+            echo "verdict.json not produced; treating as error." >&2
+            printf '%s' '{"summary":"review did not produce verdict.json","errors":[{"category":"internal","file":"-","line":0,"problem":"verdict.json missing - the AI review step did not write a result","schema_evidence":"-","suggestion":"check the AI schema review step logs"}],"warnings":[]}' > verdict.json
+          fi
+          ERR=$(jq '(.errors // []) | length' verdict.json)
+          WARN=$(jq '(.warnings // []) | length' verdict.json)
+          if [ "$ERR" -gt 0 ]; then STATUS=error; GATE=failure;
+          elif [ "$WARN" -gt 0 ]; then STATUS=warning; GATE=pending;
+          else STATUS=pass; GATE=success; fi
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          echo "gate=${GATE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved status=${STATUS} (errors=${ERR}, warnings=${WARN})"
+
+      - name: Set schema-gate commit status
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -f state="${{ steps.gate.outputs.gate }}" \
+            -f context="schema-gate" \
+            -f description="schema check: ${{ steps.gate.outputs.status }}" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Notify Slack (always)
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL_ID }}
+          PROJECT_NAME: ${{ steps.meta.outputs.project }}
+          GIT_TAG: ${{ steps.meta.outputs.tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPO: ${{ github.repository }}
+        run: bash ci/notify-slack.sh "${{ steps.gate.outputs.status }}"
+
+      - name: Fail the check on error
+        if: ${{ steps.gate.outputs.status == 'error' }}
+        run: |
+          echo "Schema errors detected; failing the check to block the merge." >&2
+          exit 1
+
+  resume:
+    if: ${{ github.event_name == 'repository_dispatch' && github.event.action == 'schema-approval' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show decision
+        run: |
+          echo "Decision: ${{ github.event.client_payload.decision }}"
+          echo "PR: ${{ github.event.client_payload.pr }} / SHA: ${{ github.event.client_payload.sha }}"
+
+      - name: Deploy (placeholder) on approve
+        if: ${{ github.event.client_payload.decision == 'approve' }}
+        run: |
+          echo "✅ Warning approved in Slack — continuing the merge/deploy flow (placeholder)."
+          echo "Deploying commit ${{ github.event.client_payload.sha }} ..."
+
+      - name: Cancelled on reject
+        if: ${{ github.event.client_payload.decision == 'reject' }}
+        run: |
+          echo "⛔ Warning rejected in Slack — this CICD run is cancelled."

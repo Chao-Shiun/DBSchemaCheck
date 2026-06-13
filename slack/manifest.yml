@@ -1,0 +1,26 @@
+# Slack App Manifest for "DBSchemaCheck Gate".
+# Create the app at https://api.slack.com/apps?new_app=1 -> Create New App -> From a manifest.
+# IMPORTANT: replace YOUR-PROJECT-REF below with your real Supabase project ref before pasting/saving.
+# Verified against the official manifest reference (docs.slack.dev/reference/app-manifest).
+display_information:
+  name: DBSchemaCheck Gate
+  description: CI gate bot that posts DB schema review results and approve/reject buttons.
+
+features:
+  bot_user:
+    # NOTE: bot username allows only a-z 0-9 - _ . (no spaces). The friendly name lives in display_information.name.
+    display_name: dbschemacheck-gate
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://YOUR-PROJECT-REF.functions.supabase.co/slack-approval
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
