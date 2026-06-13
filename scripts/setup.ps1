@@ -66,8 +66,9 @@ if ($vars.ContainsKey("SUPABASE_DB_URL") -and $vars["SUPABASE_DB_URL"]) {
   }
 }
 
-Write-Host "  deploying Edge Function slack-approval (--no-verify-jwt)"
-supabase functions deploy slack-approval --no-verify-jwt --project-ref $vars["SUPABASE_PROJECT_REF"]
+Write-Host "  deploying Edge Function slack-approval (--use-api, --no-verify-jwt)"
+# --use-api bundles server-side (no Docker / no edge-runtime image pull).
+supabase functions deploy slack-approval --use-api --no-verify-jwt --project-ref $vars["SUPABASE_PROJECT_REF"]
 
 # Push the two function secrets via a temp dotenv file (no values on the command line).
 $fnTmp = New-TemporaryFile
