@@ -47,16 +47,15 @@ $ghSecrets = @("SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID", "SUPABASE_DB_HOST", "SUPAB
 $ghTmp = New-TemporaryFile
 try {
   $lines = foreach ($s in $ghSecrets) { Need $s; "$s=$($vars[$s])" }
-  Set-Content -Path $ghTmp -Encoding utf8 -Value $lines
-  gh secret set --env-file $ghTmp --repo $Repo
+  # Write UTF-8 WITHOUT BOM; gh's dotenv parser rejects a leading BOM.
+  [System.IO.File]::WriteAllText($ghTmp.FullName, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+  gh secret set --env-file $ghTmp.FullName --repo $Repo
   Write-Host "  set: $($ghSecrets -join ', ')"
 } finally { Remove-Item $ghTmp -Force -ErrorAction SilentlyContinue }
 
 Write-Host "== Supabase: link, schema, function, secrets =="
 Need "SUPABASE_PROJECT_REF"; Need "SLACK_SIGNING_SECRET"; Need "GH_DISPATCH_TOKEN"
 Assert-Command supabase
-
-supabase link --project-ref $vars["SUPABASE_PROJECT_REF"]
 
 if ($vars.ContainsKey("SUPABASE_DB_URL") -and $vars["SUPABASE_DB_URL"]) {
   if (Get-Command psql -ErrorAction SilentlyContinue) {
@@ -73,11 +72,10 @@ supabase functions deploy slack-approval --no-verify-jwt --project-ref $vars["SU
 # Push the two function secrets via a temp dotenv file (no values on the command line).
 $fnTmp = New-TemporaryFile
 try {
-  Set-Content -Path $fnTmp -Encoding utf8 -Value @(
-    "SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])",
-    "GH_DISPATCH_TOKEN=$($vars['GH_DISPATCH_TOKEN'])"
-  )
-  supabase secrets set --env-file $fnTmp --project-ref $vars["SUPABASE_PROJECT_REF"]
+  $fnLines = @("SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])", "GH_DISPATCH_TOKEN=$($vars['GH_DISPATCH_TOKEN'])")
+  # Write UTF-8 WITHOUT BOM (Supabase/gh dotenv parsers reject a leading BOM).
+  [System.IO.File]::WriteAllText($fnTmp.FullName, (($fnLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+  supabase secrets set --env-file $fnTmp.FullName --project-ref $vars["SUPABASE_PROJECT_REF"]
 } finally { Remove-Item $fnTmp -Force -ErrorAction SilentlyContinue }
 
 Write-Host ""
