@@ -38,20 +38,24 @@ function verifySlackSignature(timestamp: string, signature: string, rawBody: str
   return diff === 0;
 }
 
+// POST to the GitHub API and report whether it succeeded. fetch does not throw on 4xx/5xx,
+// so the response MUST be checked or failures are silent.
+async function ghPost(url: string, body: unknown): Promise<{ ok: boolean; status: number; detail: string }> {
+  const res = await fetch(url, { method: "POST", headers: GH_HEADERS, body: JSON.stringify(body) });
+  let detail = "";
+  if (!res.ok) {
+    detail = (await res.text()).slice(0, 300);
+    console.error(`GitHub API ${url} -> ${res.status}: ${detail}`);
+  }
+  return { ok: res.ok, status: res.status, detail };
+}
+
 async function setCommitStatus(repo: string, sha: string, state: string, description: string) {
-  await fetch(`https://api.github.com/repos/${repo}/statuses/${sha}`, {
-    method: "POST",
-    headers: GH_HEADERS,
-    body: JSON.stringify({ state, context: "schema-gate", description }),
-  });
+  return await ghPost(`https://api.github.com/repos/${repo}/statuses/${sha}`, { state, context: "schema-gate", description });
 }
 
 async function dispatch(repo: string, decision: string, pr: string, sha: string) {
-  await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
-    method: "POST",
-    headers: GH_HEADERS,
-    body: JSON.stringify({ event_type: "schema-approval", client_payload: { decision, pr, sha } }),
-  });
+  return await ghPost(`https://api.github.com/repos/${repo}/dispatches`, { event_type: "schema-approval", client_payload: { decision, pr, sha } });
 }
 
 async function updateSlackMessage(responseUrl: string, text: string) {
@@ -80,12 +84,20 @@ async function processDecision(payload: Record<string, unknown>) {
   const sha = meta.sha as string;
 
   if (decision === "approve") {
-    await setCommitStatus(repo, sha, "success", `approved by ${userId}`);
-    await dispatch(repo, "approve", String(meta.pr ?? ""), sha);
-    await updateSlackMessage(responseUrl, `:white_check_mark: 已由 <@${userId}> *放行*。schema-gate → success，繼續後續合併/佈署流程。`);
+    const r = await setCommitStatus(repo, sha, "success", `approved by ${userId}`);
+    if (r.ok) {
+      await dispatch(repo, "approve", String(meta.pr ?? ""), sha);
+      await updateSlackMessage(responseUrl, `:white_check_mark: 已由 <@${userId}> *放行*。schema-gate → success，繼續後續合併/佈署流程。`);
+    } else {
+      await updateSlackMessage(responseUrl, `:warning: <@${userId}> 按了 *放行*，但更新 GitHub schema-gate 失敗（HTTP ${r.status}）。PR 仍被擋。請確認 GH_DISPATCH_TOKEN 具備該 repo 的 Commit statuses: write 與 Contents: write 權限。`);
+    }
   } else if (decision === "reject") {
-    await setCommitStatus(repo, sha, "failure", `rejected by ${userId}`);
-    await updateSlackMessage(responseUrl, `:no_entry: 已由 <@${userId}> *拒絕*。schema-gate → failure，本次 CICD 取消。`);
+    const r = await setCommitStatus(repo, sha, "failure", `rejected by ${userId}`);
+    if (r.ok) {
+      await updateSlackMessage(responseUrl, `:no_entry: 已由 <@${userId}> *拒絕*。schema-gate → failure，本次 CICD 取消。`);
+    } else {
+      await updateSlackMessage(responseUrl, `:warning: <@${userId}> 按了 *拒絕*（PR 仍為 pending、同樣會擋住合併），但更新 GitHub schema-gate 失敗（HTTP ${r.status}）。請確認 GH_DISPATCH_TOKEN 權限。`);
+    }
   }
 }
 
