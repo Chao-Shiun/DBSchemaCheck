@@ -20,3 +20,5 @@ scripts/.env.setup
 # OS
 .DS_Store
 Thumbs.db
+
+src/PaymentDemo/.idea/

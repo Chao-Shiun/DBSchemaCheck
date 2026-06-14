@@ -8,16 +8,9 @@ namespace PaymentDemo.Repositories;
 // every query is parameterized (no SQL injection), and every column / value
 // reference matches db/schema.sql exactly. See demo/DEMO.md for the deliberate
 // drift used to demonstrate the CI gate.
-public sealed class PaymentRepository
+public sealed class PaymentRepository(string connectionString)
 {
-    private readonly string _connectionString;
-
-    public PaymentRepository(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
-
-    private NpgsqlConnection CreateConnection() => new NpgsqlConnection(_connectionString);
+    private NpgsqlConnection CreateConnection() => new(connectionString);
 
     // Returns the saved payment methods for a user. card_last_four matches the schema column.
     public async Task<IReadOnlyList<PaymentMethod>> GetPaymentMethodsAsync(long userId)
@@ -45,28 +38,28 @@ public sealed class PaymentRepository
         return rows.ToList();
     }
 
-    // ERROR demo: references card_last4 but the schema column is card_last_four -> runtime error
+    // Returns the masked card digits. card_last_four matches the schema column.
     public async Task<string?> GetMaskedCardAsync(long paymentMethodId)
     {
-        const string sql = "select card_last4 from payment_methods where id = @paymentMethodId";
+        const string sql = "select card_last_four from payment_methods where id = @paymentMethodId";
         await using var connection = CreateConnection();
         return await connection.ExecuteScalarAsync<string?>(sql, new { paymentMethodId });
     }
 
-    // ERROR demo: writes status 'PAID' which is not allowed by the CHECK constraint -> runtime error
-    public async Task MarkPaidAsync(long paymentId)
+    // Marks a payment as captured. 'captured' is one of the schema CHECK allowed values.
+    public async Task MarkCapturedAsync(long paymentId)
     {
-        const string sql = "update payments set status = 'PAID' where id = @paymentId";
+        const string sql = "update payments set status = 'captured' where id = @paymentId";
         await using var connection = CreateConnection();
         await connection.ExecuteAsync(sql, new { paymentId });
     }
 
-    // ERROR demo (SQL injection): untrusted input interpolated directly into the SQL string
-    public async Task<IReadOnlyList<Payment>> SearchByRawUserInputAsync(string userInput)
+    // Lists a user's payments. Parameterized (no injection); payments.user_id is indexed.
+    public async Task<IReadOnlyList<Payment>> SearchByUserIdAsync(long userId)
     {
-        string sql = $"select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where user_id = {userInput}";
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where user_id = @userId";
         await using var connection = CreateConnection();
-        var rows = await connection.QueryAsync<Payment>(sql);
+        var rows = await connection.QueryAsync<Payment>(sql, new { userId });
         return rows.ToList();
     }
 }
