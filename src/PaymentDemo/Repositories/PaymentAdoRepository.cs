@@ -10,13 +10,14 @@ public sealed class PaymentAdoRepository(string connectionString)
 {
     private NpgsqlConnection CreateConnection() => new(connectionString);
 
-    // ERROR: user input concatenated into CommandText instead of a parameter (SQL injection).
-    public async Task<long> CountPaymentsByStatusAsync(string statusFromUser)
+    // Counts payments by status. Parameterized, so no SQL injection.
+    public async Task<long> CountPaymentsByStatusAsync(string status)
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync();
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "select count(*) from payments where status = '" + statusFromUser + "'";
+        cmd.CommandText = "select count(*) from payments where status = @status";
+        cmd.Parameters.AddWithValue("status", status);
         return (long)(await cmd.ExecuteScalarAsync())!;
     }
 
@@ -32,15 +33,18 @@ public sealed class PaymentAdoRepository(string connectionString)
         return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 
-    // ERROR: card_last_four is nullable but read with GetString and no IsDBNull check.
-    public async Task<string> GetFirstCardLastFourAsync()
+    // Reads the first card_last_four. Guards the empty result set and the nullable column.
+    public async Task<string?> GetFirstCardLastFourAsync()
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync();
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = "select card_last_four from payment_methods order by id limit 1";
         await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
+        if (!await reader.ReadAsync() || reader.IsDBNull(0))
+        {
+            return null;
+        }
         return reader.GetString(0);
     }
 
