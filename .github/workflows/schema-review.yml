@@ -72,6 +72,7 @@ jobs:
             your verdict to verdict.json at the repository root as the instructions specify.
           claude_args: >-
             --mcp-config ci/mcp-config.json
+            --model claude-sonnet-4-6
             --allowedTools "mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
 
       - name: Evaluate verdict and decide gate
