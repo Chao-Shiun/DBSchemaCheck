@@ -11,46 +11,61 @@ VERDICT_FILE="${VERDICT_FILE:-verdict.json}"
 : "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}"
 : "${SLACK_CHANNEL:?SLACK_CHANNEL is required}"
 PROJECT_NAME="${PROJECT_NAME:-unknown-project}"
-GIT_TAG="${GIT_TAG:-untagged}"
+GIT_BRANCH="${GIT_BRANCH:-unknown}"
 PR_NUMBER="${PR_NUMBER:-}"
 COMMIT_SHA="${COMMIT_SHA:-}"
 REPO="${REPO:-}"
 
 case "$STATUS" in
-  pass)    HEADER="✅ Schema Check: SUCCESS" ; STATUS_TEXT="SUCCESS" ;;
-  warning) HEADER="⚠️ Schema Check: WARNING (等待核准)" ; STATUS_TEXT="WARNING" ;;
-  error)   HEADER="❌ Schema Check: FAILED" ; STATUS_TEXT="FAILED" ;;
+  pass)    HEADER="✅ Schema Check: SUCCESS" ;;
+  warning) HEADER="⚠️ Schema Check: WARNING (等待核准)" ;;
+  error)   HEADER="❌ Schema Check: FAILED" ;;
   *) echo "unknown status: $STATUS" >&2 ; exit 2 ;;
 esac
 
 SHORT_SHA="${COMMIT_SHA:0:7}"
 
-# Build the metadata section (tag name, project name, status, PR, commit) as required.
-META_TEXT="*專案 (Project):* ${PROJECT_NAME}"$'\n'"*Tag:* ${GIT_TAG}"$'\n'"*狀態 (Status):* ${STATUS_TEXT}"
-[ -n "$PR_NUMBER" ] && META_TEXT="${META_TEXT}"$'\n'"*PR:* #${PR_NUMBER}"
-[ -n "$SHORT_SHA" ] && META_TEXT="${META_TEXT}"$'\n'"*Commit:* ${SHORT_SHA}"
+# Header + a compact metadata context line (project, branch, PR, commit).
+META_CTX="📦 ${PROJECT_NAME}"
+[ -n "$GIT_BRANCH" ] && META_CTX="${META_CTX}   🌿 ${GIT_BRANCH}"
+[ -n "$PR_NUMBER" ] && META_CTX="${META_CTX}   🔗 PR #${PR_NUMBER}"
+[ -n "$SHORT_SHA" ] && META_CTX="${META_CTX}   \`${SHORT_SHA}\`"
 
-blocks=$(jq -n --arg header "$HEADER" --arg meta "$META_TEXT" '
+blocks=$(jq -n --arg header "$HEADER" --arg meta "$META_CTX" '
   [
     { type: "header",  text: { type: "plain_text", text: $header, emoji: true } },
-    { type: "section", text: { type: "mrkdwn", text: $meta } }
+    { type: "context", elements: [ { type: "mrkdwn", text: $meta } ] }
   ]')
 
-# Append a section per finding (errors first, then warnings) so failures/warnings are fully explained.
+# Count line + AI summary + divider, then one card per finding (errors first, then warnings),
+# each separated by a divider. Cap at 18 findings to stay within Slack's 50-block limit.
 if [ -f "$VERDICT_FILE" ]; then
-  issue_blocks=$(jq '
-    def fmt(kind; lbl):
-      (.[kind] // []) | map(
-        { type: "section",
-          text: { type: "mrkdwn",
-            text: ("*[" + lbl + "] " + (.category // "issue") + "*\n"
-                   + "`" + (.file // "?") + ":" + ((.line // 0) | tostring) + "`\n"
-                   + "問題: " + (.problem // "") + "\n"
-                   + "Schema 實況: " + (.schema_evidence // "-") + "\n"
-                   + "建議: " + (.suggestion // "")) } } );
-    (fmt("errors"; "ERROR") + fmt("warnings"; "WARNING"))
+  ERR_COUNT=$(jq '(.errors // []) | length' "$VERDICT_FILE")
+  WARN_COUNT=$(jq '(.warnings // []) | length' "$VERDICT_FILE")
+  SUMMARY=$(jq -r '.summary // ""' "$VERDICT_FILE")
+  intro=$(jq -n --arg e "$ERR_COUNT" --arg w "$WARN_COUNT" --arg s "$SUMMARY" '
+    [ { type: "section", text: { type: "mrkdwn",
+        text: (if ($e == "0" and $w == "0") then "🟢 無 schema 問題"
+               else ("🔴 *" + $e + "* error  ·  🟠 *" + $w + "* warning") end) } } ]
+    + (if ($s | length) > 0 then [ { type: "context", elements: [ { type: "mrkdwn", text: $s } ] } ] else [] end)
+    + [ { type: "divider" } ]')
+  cards=$(jq '
+    def card(emoji; lbl; f):
+      { type: "section", text: { type: "mrkdwn",
+          text: (emoji + "  *" + lbl + "*  ·  `" + (f.category // "issue") + "`  ·  `" + (f.file // "?") + ":" + ((f.line // 0) | tostring) + "`\n"
+                 + "*問題:* " + (f.problem // "") + "\n"
+                 + "*Schema:* " + (f.schema_evidence // "-") + "\n"
+                 + "*建議:* " + (f.suggestion // "")) } };
+    ( [ (.errors // [])[]   | { e: "🛑", l: "ERROR",   f: . } ]
+      + [ (.warnings // [])[] | { e: "⚠️", l: "WARNING", f: . } ] ) as $all
+    | ($all[0:18]) as $shown
+    | [ $shown[] | card(.e; .l; .f), { type: "divider" } ]
+      + (if ($all | length) > 18
+         then [ { type: "context", elements: [ { type: "mrkdwn",
+                  text: ("…還有 " + ((($all | length) - 18) | tostring) + " 筆未顯示，完整內容見 GitHub Actions log") } ] } ]
+         else [] end)
   ' "$VERDICT_FILE")
-  blocks=$(jq -n --argjson a "$blocks" --argjson b "$issue_blocks" '$a + $b')
+  blocks=$(jq -n --argjson a "$blocks" --argjson i "$intro" --argjson c "$cards" '$a + $i + $c')
 fi
 
 # For warnings, append approve / reject buttons. The value carries the context the

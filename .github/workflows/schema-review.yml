@@ -39,14 +39,8 @@ jobs:
 
       - name: Resolve metadata
         id: meta
-        env:
-          HEAD_REF: ${{ github.head_ref }}
         run: |
-          # Prefer the nearest git tag; if there are no tags, fall back to the PR source
-          # branch (github.head_ref) instead of the "N/merge" ref, or the ref name on push.
-          TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-          if [ -z "$TAG" ]; then TAG="${HEAD_REF:-$GITHUB_REF_NAME}"; fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          # The gate runs pre-merge, so there is no release tag yet; report the project only.
           echo "project=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
       - name: Download MCP Toolbox
@@ -114,7 +108,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL_ID }}
           PROJECT_NAME: ${{ steps.meta.outputs.project }}
-          GIT_TAG: ${{ steps.meta.outputs.tag }}
+          GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           REPO: ${{ github.repository }}
