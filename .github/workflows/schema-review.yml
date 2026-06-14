@@ -39,8 +39,13 @@ jobs:
 
       - name: Resolve metadata
         id: meta
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "${GITHUB_REF_NAME}")"
+          # Prefer the nearest git tag; if there are no tags, fall back to the PR source
+          # branch (github.head_ref) instead of the "N/merge" ref, or the ref name on push.
+          TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then TAG="${HEAD_REF:-$GITHUB_REF_NAME}"; fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "project=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
