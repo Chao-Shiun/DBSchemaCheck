@@ -11,7 +11,7 @@ VERDICT_FILE="${VERDICT_FILE:-verdict.json}"
 : "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}"
 : "${SLACK_CHANNEL:?SLACK_CHANNEL is required}"
 PROJECT_NAME="${PROJECT_NAME:-unknown-project}"
-GIT_TAG="${GIT_TAG:-untagged}"
+GIT_BRANCH="${GIT_BRANCH:-unknown}"
 PR_NUMBER="${PR_NUMBER:-}"
 COMMIT_SHA="${COMMIT_SHA:-}"
 REPO="${REPO:-}"
@@ -26,7 +26,7 @@ esac
 SHORT_SHA="${COMMIT_SHA:0:7}"
 
 # Build the metadata section (tag name, project name, status, PR, commit) as required.
-META_TEXT="*專案 (Project):* ${PROJECT_NAME}"$'\n'"*Tag:* ${GIT_TAG}"$'\n'"*狀態 (Status):* ${STATUS_TEXT}"
+META_TEXT="*專案 (Project):* ${PROJECT_NAME}"$'\n'"*Branch:* ${GIT_BRANCH}"$'\n'"*狀態 (Status):* ${STATUS_TEXT}"
 [ -n "$PR_NUMBER" ] && META_TEXT="${META_TEXT}"$'\n'"*PR:* #${PR_NUMBER}"
 [ -n "$SHORT_SHA" ] && META_TEXT="${META_TEXT}"$'\n'"*Commit:* ${SHORT_SHA}"
 
