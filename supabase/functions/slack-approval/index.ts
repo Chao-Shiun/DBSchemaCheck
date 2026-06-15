@@ -1,17 +1,12 @@
 // Supabase Edge Function: Slack interactivity endpoint for schema-gate approvals.
 //
-// Flow: a WARNING posts Slack buttons. When a user clicks 放行 / 拒絕, Slack POSTs here.
-// This function verifies the Slack signature, sets the GitHub `schema-gate` commit status,
-// updates the Slack message, and (on approve) triggers a repository_dispatch so the
-// deploy/merge flow can continue.
-//
-// It ACKs Slack with HTTP 200 within Slack's 3-second window, then finishes the GitHub/Slack
-// calls out-of-band via EdgeRuntime.waitUntil so a slow GitHub API can't cause a Slack timeout
-// (which would trigger retries and duplicate dispatches).
+// Flow: a WARNING posts Slack buttons. When a user clicks approve or reject, Slack POSTs here.
+// This function verifies the Slack signature, then triggers repository_dispatch. The GitHub
+// Actions resume job uses GITHUB_TOKEN to update the `schema-gate` commit status.
 //
 // Required function secrets (supabase secrets set ...):
 //   SLACK_SIGNING_SECRET  - to verify Slack request signatures
-//   GH_DISPATCH_TOKEN     - GitHub token with statuses:write + repo dispatch (least privilege)
+//   GH_DISPATCH_TOKEN     - GitHub token with Contents: read/write for repository_dispatch
 //   APPROVER_SLACK_IDS    - optional, comma-separated Slack user IDs allowed to decide
 import { createHmac } from "node:crypto";
 
@@ -24,6 +19,23 @@ const GH_HEADERS = {
   "Accept": "application/vnd.github+json",
   "Content-Type": "application/json",
   "User-Agent": "dbschemacheck-slack-approval",
+  "X-GitHub-Api-Version": "2022-11-28",
+};
+
+type Decision = "approve" | "reject";
+
+type ButtonMeta = {
+  repo?: string;
+  sha?: string;
+  pr?: string;
+  channel?: string;
+};
+
+type GitHubResult = {
+  ok: boolean;
+  status: number;
+  detail: string;
+  url: string;
 };
 
 function verifySlackSignature(timestamp: string, signature: string, rawBody: string): boolean {
@@ -38,24 +50,34 @@ function verifySlackSignature(timestamp: string, signature: string, rawBody: str
   return diff === 0;
 }
 
-// POST to the GitHub API and report whether it succeeded. fetch does not throw on 4xx/5xx,
-// so the response MUST be checked or failures are silent.
-async function ghPost(url: string, body: unknown): Promise<{ ok: boolean; status: number; detail: string }> {
-  const res = await fetch(url, { method: "POST", headers: GH_HEADERS, body: JSON.stringify(body) });
-  let detail = "";
-  if (!res.ok) {
-    detail = (await res.text()).slice(0, 300);
-    console.error(`GitHub API ${url} -> ${res.status}: ${detail}`);
+function isValidRepo(repo: string): boolean {
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
+}
+
+function isValidSha(sha: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(sha);
+}
+
+function cleanForSlack(text: string, maxLength: number): string {
+  return text.replace(/[`<>]/g, "").slice(0, maxLength);
+}
+
+async function ghPost(path: string, body: unknown): Promise<GitHubResult> {
+  const url = `https://api.github.com${path}`;
+  try {
+    const res = await fetch(url, { method: "POST", headers: GH_HEADERS, body: JSON.stringify(body) });
+    const detail = res.ok ? "" : cleanForSlack(await res.text(), 300);
+    if (!res.ok) console.error(`GitHub API ${url} -> ${res.status}: ${detail}`);
+    return { ok: res.ok, status: res.status, detail, url };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`GitHub API ${url} failed: ${detail}`);
+    return { ok: false, status: 0, detail: cleanForSlack(detail, 300), url };
   }
-  return { ok: res.ok, status: res.status, detail };
 }
 
-async function setCommitStatus(repo: string, sha: string, state: string, description: string) {
-  return await ghPost(`https://api.github.com/repos/${repo}/statuses/${sha}`, { state, context: "schema-gate", description });
-}
-
-async function dispatch(repo: string, decision: string, pr: string, sha: string) {
-  return await ghPost(`https://api.github.com/repos/${repo}/dispatches`, { event_type: "schema-approval", client_payload: { decision, pr, sha } });
+async function dispatchDecision(repo: string, decision: Decision, pr: string, sha: string, approver: string) {
+  return await ghPost(`/repos/${repo}/dispatches`, { event_type: "schema-approval", client_payload: { decision, pr, sha, approver } });
 }
 
 async function updateSlackMessage(responseUrl: string, text: string) {
@@ -67,37 +89,58 @@ async function updateSlackMessage(responseUrl: string, text: string) {
   });
 }
 
-// Performs the decision side effects. Runs out-of-band (after the 200 ACK) via waitUntil.
+function githubFailureMessage(userId: string, decisionText: string, result: GitHubResult, repo: string, sha: string): string {
+  const statusText = result.status === 0 ? "network error" : `HTTP ${result.status}`;
+  const shortSha = sha.slice(0, 7);
+  const detail = result.detail ? ` GitHub response: \`${cleanForSlack(result.detail, 180)}\`` : "";
+  return `:warning: <@${userId}> 按了 *${decisionText}*，但無法觸發 GitHub repository_dispatch（${statusText}）。PR 仍會維持 pending。請確認 Supabase secret \`GH_DISPATCH_TOKEN\` 是最新 token，且對 \`${repo}\` 具備 Contents: read/write。commit: \`${shortSha}\`.${detail}`;
+}
+
+// Performs the decision side effects. Runs out-of-band after the 200 ACK via waitUntil.
 async function processDecision(payload: Record<string, unknown>) {
   const action = (payload.actions as Array<Record<string, unknown>> | undefined)?.[0];
-  const decision = action?.action_id as string | undefined; // "approve" | "reject"
+  const decision = action?.action_id as Decision | undefined;
   const userId = (payload.user as Record<string, unknown> | undefined)?.id as string ?? "";
   const responseUrl = payload.response_url as string;
-  const meta = JSON.parse((action?.value as string) ?? "{}"); // { repo, sha, pr, channel }
+
+  if (decision !== "approve" && decision !== "reject") {
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> 收到未知決策，未變更 schema-gate。`);
+    return;
+  }
 
   if (APPROVER_IDS.length > 0 && !APPROVER_IDS.includes(userId)) {
     await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> 無核准權限，決策未生效。`);
     return;
   }
 
-  const repo = meta.repo as string;
-  const sha = meta.sha as string;
+  let meta: ButtonMeta;
+  try {
+    meta = JSON.parse((action?.value as string | undefined) ?? "{}") as ButtonMeta;
+  } catch {
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕內容無法解析，未變更 schema-gate。`);
+    return;
+  }
+
+  const repo = (meta.repo ?? "").trim();
+  const sha = (meta.sha ?? "").trim();
+  const pr = String(meta.pr ?? "");
+
+  if (!isValidRepo(repo) || !isValidSha(sha)) {
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕缺少有效 repo 或 commit SHA，未變更 schema-gate。請重新執行 DB Schema Check 產生新的 WARNING 訊息。repo=\`${cleanForSlack(repo, 80)}\`, sha=\`${cleanForSlack(sha, 80)}\``);
+    return;
+  }
+
+  const result = await dispatchDecision(repo, decision, pr, sha, userId);
+  const decisionText = decision === "approve" ? "放行" : "拒絕";
+  if (!result.ok) {
+    await updateSlackMessage(responseUrl, githubFailureMessage(userId, decisionText, result, repo, sha));
+    return;
+  }
 
   if (decision === "approve") {
-    const r = await setCommitStatus(repo, sha, "success", `approved by ${userId}`);
-    if (r.ok) {
-      await dispatch(repo, "approve", String(meta.pr ?? ""), sha);
-      await updateSlackMessage(responseUrl, `:white_check_mark: 已由 <@${userId}> *放行*。schema-gate → success，繼續後續合併/佈署流程。`);
-    } else {
-      await updateSlackMessage(responseUrl, `:warning: <@${userId}> 按了 *放行*，但更新 GitHub schema-gate 失敗（HTTP ${r.status}）。PR 仍被擋。請確認 GH_DISPATCH_TOKEN 具備該 repo 的 Commit statuses: write 與 Contents: write 權限。`);
-    }
-  } else if (decision === "reject") {
-    const r = await setCommitStatus(repo, sha, "failure", `rejected by ${userId}`);
-    if (r.ok) {
-      await updateSlackMessage(responseUrl, `:no_entry: 已由 <@${userId}> *拒絕*。schema-gate → failure，本次 CICD 取消。`);
-    } else {
-      await updateSlackMessage(responseUrl, `:warning: <@${userId}> 按了 *拒絕*（PR 仍為 pending、同樣會擋住合併），但更新 GitHub schema-gate 失敗（HTTP ${r.status}）。請確認 GH_DISPATCH_TOKEN 權限。`);
-    }
+    await updateSlackMessage(responseUrl, `:white_check_mark: 已由 <@${userId}> *放行*。已送出 GitHub Actions resume job，將由 workflow 把 schema-gate 更新為 success。`);
+  } else {
+    await updateSlackMessage(responseUrl, `:no_entry: 已由 <@${userId}> *拒絕*。已送出 GitHub Actions resume job，將由 workflow 把 schema-gate 更新為 failure。`);
   }
 }
 
