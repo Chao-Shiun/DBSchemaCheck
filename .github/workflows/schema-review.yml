@@ -133,6 +133,35 @@ jobs:
           echo "Decision: ${{ github.event.client_payload.decision }}"
           echo "PR: ${{ github.event.client_payload.pr }} / SHA: ${{ github.event.client_payload.sha }}"
 
+      - name: Set schema-gate from Slack decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DECISION: ${{ github.event.client_payload.decision }}
+          COMMIT_SHA: ${{ github.event.client_payload.sha }}
+          APPROVER: ${{ github.event.client_payload.approver }}
+        run: |
+          if [ -z "$COMMIT_SHA" ]; then
+            echo "Missing commit SHA in repository_dispatch payload." >&2
+            exit 1
+          fi
+
+          if [ "$DECISION" = "approve" ]; then
+            STATE=success
+            DESCRIPTION="schema warning approved by ${APPROVER:-Slack}"
+          elif [ "$DECISION" = "reject" ]; then
+            STATE=failure
+            DESCRIPTION="schema warning rejected by ${APPROVER:-Slack}"
+          else
+            echo "Unknown Slack decision: $DECISION" >&2
+            exit 1
+          fi
+
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${COMMIT_SHA}" \
+            -f state="$STATE" \
+            -f context="schema-gate" \
+            -f description="$DESCRIPTION" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
       - name: Deploy (placeholder) on approve
         if: ${{ github.event.client_payload.decision == 'approve' }}
         run: |

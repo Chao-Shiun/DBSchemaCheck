@@ -70,8 +70,8 @@ public async Task AddLongNoteAsync(long paymentId, string longNote)
 ```
 
 預期：`schema-gate` = pending（PR 被卡住）、Slack 收到 **WARNING** 與兩顆按鈕。
-- 按「放行」→ Edge Function 將 `schema-gate` 設為 success、`repository_dispatch` 觸發 `resume` job 跑佈署 placeholder、Slack 訊息更新為已放行。
-- 按「拒絕」→ `schema-gate` 設為 failure、Slack 訊息更新為已取消。
+- 按「放行」→ Edge Function 送出 `repository_dispatch`，`resume` job 將 `schema-gate` 設為 success 並跑佈署 placeholder，Slack 訊息更新為已放行。
+- 按「拒絕」→ Edge Function 送出 `repository_dispatch`，`resume` job 將 `schema-gate` 設為 failure，Slack 訊息更新為已取消。
 
 ---
 

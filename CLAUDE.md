@@ -11,19 +11,19 @@ There is no application server and no automated test suite. The "code" is the pi
 ## Architecture (the big picture)
 
 Single-run control flow:
-`PR → review job → Claude reads diff + live schema → verdict.json → schema-gate commit status → Slack → (warning only) Edge Function → repository_dispatch → resume job`.
+`PR → review job → Claude reads diff + live schema → verdict.json → schema-gate commit status → Slack → (warning only) Edge Function → repository_dispatch → resume job updates schema-gate`.
 
 How the pieces connect:
 - **`.github/workflows/schema-review.yml`** — the orchestrator. The `review` job (on `pull_request`) downloads the toolbox, runs `claude-code-action`, then computes status from `verdict.json` with `jq`, sets the `schema-gate` commit status, posts to Slack, and `exit 1`s on error. The `resume` job (on `repository_dispatch: schema-approval`) runs the post-approval deploy step.
 - **`ci/review-prompt.md`** — the AI reviewer's instructions: WHAT to check, the errors-vs-warnings classification policy, and the required `verdict.json` shape. **Edit this file to change what gets flagged or how severity is graded.**
 - **`ci/mcp-config.json`** — declares the `toolbox` MCP server (stdio, `--prebuilt postgres`). The toolbox reads `POSTGRES_*` from the job environment.
 - **`ci/notify-slack.sh`** — builds the Block Kit message from `verdict.json` and posts via `chat.postMessage` (always). Adds approve/reject buttons on warnings.
-- **`supabase/functions/slack-approval/index.ts`** — Deno Edge Function. Verifies the Slack signature, ACKs within 3s, then (asynchronously) sets the `schema-gate` commit status and triggers `repository_dispatch`.
+- **`supabase/functions/slack-approval/index.ts`** — Deno Edge Function. Verifies the Slack signature, ACKs within 3s, then triggers `repository_dispatch`; the `resume` job updates the `schema-gate` commit status with `GITHUB_TOKEN`.
 - **`db/schema.sql`** — the payment-feature schema applied to Supabase. NOTE: the reviewer reads the **live** schema via the toolbox, not this file; `schema.sql` only sets up the database.
 - **`src/PaymentDemo/`** — a small .NET sample whose DB-access code is what gets reviewed in the demo.
 - **`scripts/setup.ps1`** — one-shot provisioner: pushes GitHub secrets and deploys the Edge Function from a local `scripts/.env.setup` (gitignored).
 
-**Key concept — the gate is one commit status.** `schema-gate` is the single source of truth for whether a PR may merge. It is set *synchronously* by the workflow (from Claude's verdict) and *asynchronously* by the Edge Function (from a human's Slack click). It must be configured as a required status check on `master` to actually block merges.
+**Key concept — the gate is one commit status.** `schema-gate` is the single source of truth for whether a PR may merge. It is set by the workflow from Claude's verdict, then updated by the `resume` job after a human Slack decision. It must be configured as a required status check on `master` to actually block merges.
 
 **Severity model (set in `ci/review-prompt.md`, enforced in the workflow):** `errors` (would cause a runtime failure, or SQL injection) → `schema-gate=failure`, block. `warnings` (no error but a performance/truncation risk, e.g. missing index, over-length column) → `schema-gate=pending`, wait for Slack approval. neither → `pass`.
 

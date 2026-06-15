@@ -69,7 +69,7 @@ if [ -f "$VERDICT_FILE" ]; then
 fi
 
 # For warnings, append approve / reject buttons. The value carries the context the
-# Supabase Edge Function needs to set the commit status and dispatch the decision.
+# Supabase Edge Function needs to dispatch the decision; the resume workflow sets the status.
 if [ "$STATUS" = "warning" ]; then
   btn_value=$(jq -n --arg repo "$REPO" --arg sha "$COMMIT_SHA" --arg pr "$PR_NUMBER" --arg ch "$SLACK_CHANNEL" \
     '{ repo: $repo, sha: $sha, pr: $pr, channel: $ch } | tostring')
