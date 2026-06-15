@@ -83,8 +83,12 @@ if [ "$STATUS" = "warning" ]; then
     echo "Invalid COMMIT_SHA for warning approval buttons: $COMMIT_SHA" >&2
     exit 1
   fi
-  btn_value=$(jq -n --arg repo "$REPO" --arg sha "$COMMIT_SHA" --arg pr "$PR_NUMBER" --arg ch "$SLACK_CHANNEL" \
-    '{ repo: $repo, sha: $sha, pr: $pr, channel: $ch } | tostring')
+  # Emit a single-encoded JSON string. jq -c prints a compact object, and --arg below
+  # string-encodes it exactly once, so the Edge Function's JSON.parse(value) yields an object.
+  # Piping through `tostring` here would double-encode it (JSON.parse would then return a
+  # string, leaving meta.repo/meta.sha undefined).
+  btn_value=$(jq -nc --arg repo "$REPO" --arg sha "$COMMIT_SHA" --arg pr "$PR_NUMBER" --arg ch "$SLACK_CHANNEL" \
+    '{ repo: $repo, sha: $sha, pr: $pr, channel: $ch }')
   actions=$(jq -n --arg v "$btn_value" '
     [ { type: "actions", elements: [
         { type: "button", style: "primary", action_id: "approve", text: { type: "plain_text", text: "放行 ✅", emoji: true }, value: $v },
