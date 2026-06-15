@@ -44,4 +44,13 @@ public sealed class PaymentRepository
         var rows = await connection.QueryAsync<Payment>(sql, new { userId });
         return rows.ToList();
     }
+
+    // Demo warning: payments.status is intentionally not indexed in db/schema.sql.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsByStatusAsync(string status)
+    {
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where status = @status";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { status });
+        return rows.ToList();
+    }
 }
