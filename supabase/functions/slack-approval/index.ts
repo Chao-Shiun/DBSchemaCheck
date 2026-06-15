@@ -126,7 +126,7 @@ async function processDecision(payload: Record<string, unknown>) {
   const pr = String(meta.pr ?? "");
 
   if (!isValidRepo(repo) || !isValidSha(sha)) {
-    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕缺少有效 repo 或 commit SHA，未變更 schema-gate。repo=\`${cleanForSlack(repo, 80)}\`, sha=\`${cleanForSlack(sha, 80)}\``);
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕缺少有效 repo 或 commit SHA，未變更 schema-gate。請重新執行 DB Schema Check 產生新的 WARNING 訊息。repo=\`${cleanForSlack(repo, 80)}\`, sha=\`${cleanForSlack(sha, 80)}\``);
     return;
   }
 

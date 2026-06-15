@@ -71,6 +71,18 @@ fi
 # For warnings, append approve / reject buttons. The value carries the context the
 # Supabase Edge Function needs to dispatch the decision; the resume workflow sets the status.
 if [ "$STATUS" = "warning" ]; then
+  if [ -z "$REPO" ] || [ -z "$COMMIT_SHA" ]; then
+    echo "REPO and COMMIT_SHA are required when posting warning approval buttons." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+    echo "Invalid REPO for warning approval buttons: $REPO" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$COMMIT_SHA" | grep -Eiq '^[0-9a-f]{40}$'; then
+    echo "Invalid COMMIT_SHA for warning approval buttons: $COMMIT_SHA" >&2
+    exit 1
+  fi
   btn_value=$(jq -n --arg repo "$REPO" --arg sha "$COMMIT_SHA" --arg pr "$PR_NUMBER" --arg ch "$SLACK_CHANNEL" \
     '{ repo: $repo, sha: $sha, pr: $pr, channel: $ch } | tostring')
   actions=$(jq -n --arg v "$btn_value" '

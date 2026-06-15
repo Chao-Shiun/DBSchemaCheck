@@ -39,9 +39,21 @@ jobs:
 
       - name: Resolve metadata
         id: meta
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           # The gate runs pre-merge, so there is no release tag yet; report the project only.
           echo "project=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "branch=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+            echo "pr=$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")" >> "$GITHUB_OUTPUT"
+            echo "sha=$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download MCP Toolbox
         run: |
@@ -112,10 +124,10 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL_ID }}
           PROJECT_NAME: ${{ steps.meta.outputs.project }}
-          GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          REPO: ${{ github.repository }}
+          GIT_BRANCH: ${{ steps.meta.outputs.branch }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr }}
+          COMMIT_SHA: ${{ steps.meta.outputs.sha }}
+          REPO: ${{ steps.meta.outputs.repo }}
         run: bash ci/notify-slack.sh "${{ steps.gate.outputs.status }}"
 
       - name: Fail the check on error
