@@ -44,4 +44,13 @@ public sealed class PaymentRepository
         var rows = await connection.QueryAsync<Payment>(sql, new { userId });
         return rows.ToList();
     }
+
+    // Deliberate syntax-error demo for DB schema gate validation.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsWithBrokenSqlAsync(long userId)
+    {
+        const string sql = "select id, from payments where user_id = @userId";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { userId });
+        return rows.ToList();
+    }
 }
