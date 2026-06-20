@@ -32,9 +32,9 @@ create table if not exists payments (
     created_at        timestamptz not null default now()
 );
 
--- payments.user_id is indexed so the baseline code is clean.
--- NOTE: payments.status is intentionally NOT indexed; the WARNING demo filters on it.
+-- payments.user_id and payments.status are indexed for the demo read paths.
 create index if not exists idx_payments_user_id on payments (user_id);
+create index if not exists idx_payments_status on payments (status);
 
 create table if not exists refunds (
     id           bigint generated always as identity primary key,

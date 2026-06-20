@@ -3,8 +3,7 @@
   One-shot setup for DBSchemaCheck prerequisites (Windows / PowerShell).
 
   1. Copy scripts/.env.setup.example to scripts/.env.setup and fill in YOUR values.
-     (scripts/.env.setup is gitignored. ANTHROPIC_API_KEY is intentionally NOT handled
-      here -- set it yourself, see README.)
+     scripts/.env.setup is gitignored. Claude auth is configured in the CI provider.
   2. Run:  powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 
   Secret values flow from scripts/.env.setup into GitHub Secrets and Supabase secrets only;
@@ -40,21 +39,23 @@ function Need($name) {
   if (-not $vars.ContainsKey($name) -or [string]::IsNullOrWhiteSpace($vars[$name])) { throw "Missing '$name' in $EnvFile" }
 }
 
-Assert-Command gh
-
-Write-Host "== Pushing GitHub Actions secrets =="
-$ghSecrets = @("SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID", "SUPABASE_DB_HOST", "SUPABASE_DB_PORT", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD")
-$ghTmp = New-TemporaryFile
-try {
-  $lines = foreach ($s in $ghSecrets) { Need $s; "$s=$($vars[$s])" }
-  # Write UTF-8 WITHOUT BOM; gh's dotenv parser rejects a leading BOM.
-  [System.IO.File]::WriteAllText($ghTmp.FullName, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-  gh secret set --env-file $ghTmp.FullName --repo $Repo
-  Write-Host "  set: $($ghSecrets -join ', ')"
-} finally { Remove-Item $ghTmp -Force -ErrorAction SilentlyContinue }
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  Write-Host "== Pushing GitHub Actions secrets =="
+  $ghSecrets = @("SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID", "SUPABASE_DB_HOST", "SUPABASE_DB_PORT", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD")
+  $ghTmp = New-TemporaryFile
+  try {
+    $lines = foreach ($s in $ghSecrets) { Need $s; "$s=$($vars[$s])" }
+    # Write UTF-8 WITHOUT BOM; gh's dotenv parser rejects a leading BOM.
+    [System.IO.File]::WriteAllText($ghTmp.FullName, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    gh secret set --env-file $ghTmp.FullName --repo $Repo
+    Write-Host "  set: $($ghSecrets -join ', ')"
+  } finally { Remove-Item $ghTmp -Force -ErrorAction SilentlyContinue }
+} else {
+  Write-Warning "gh not found -- skipping GitHub Actions secrets. Configure GitHub or Bitbucket repository variables manually."
+}
 
 Write-Host "== Supabase: link, schema, function, secrets =="
-Need "SUPABASE_PROJECT_REF"; Need "SLACK_SIGNING_SECRET"; Need "GH_DISPATCH_TOKEN"
+Need "SUPABASE_PROJECT_REF"; Need "SLACK_SIGNING_SECRET"
 Assert-Command supabase
 
 if ($vars.ContainsKey("SUPABASE_DB_URL") -and $vars["SUPABASE_DB_URL"]) {
@@ -70,10 +71,15 @@ Write-Host "  deploying Edge Function slack-approval (--use-api, --no-verify-jwt
 # --use-api bundles server-side (no Docker / no edge-runtime image pull).
 supabase functions deploy slack-approval --use-api --no-verify-jwt --project-ref $vars["SUPABASE_PROJECT_REF"]
 
-# Push the two function secrets via a temp dotenv file (no values on the command line).
+# Push function secrets via a temp dotenv file (no values on the command line).
 $fnTmp = New-TemporaryFile
 try {
-  $fnLines = @("SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])", "GH_DISPATCH_TOKEN=$($vars['GH_DISPATCH_TOKEN'])")
+  $fnLines = @("SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])")
+  foreach ($optionalSecret in @("GH_DISPATCH_TOKEN", "BITBUCKET_API_USERNAME", "BITBUCKET_API_TOKEN", "APPROVER_SLACK_IDS")) {
+    if ($vars.ContainsKey($optionalSecret) -and -not [string]::IsNullOrWhiteSpace($vars[$optionalSecret])) {
+      $fnLines += "$optionalSecret=$($vars[$optionalSecret])"
+    }
+  }
   # Write UTF-8 WITHOUT BOM (Supabase/gh dotenv parsers reject a leading BOM).
   [System.IO.File]::WriteAllText($fnTmp.FullName, (($fnLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
   supabase secrets set --env-file $fnTmp.FullName --project-ref $vars["SUPABASE_PROJECT_REF"]
@@ -81,6 +87,7 @@ try {
 
 Write-Host ""
 Write-Host "Done. Remaining manual steps you must do yourself:"
-Write-Host "  1) Set ANTHROPIC_API_KEY  ->  gh secret set ANTHROPIC_API_KEY --repo $Repo   (or GitHub UI; see README)"
-Write-Host "  2) Slack: set the Interactivity Request URL to your real function URL, Install to Workspace,"
+Write-Host "  1) GitHub: set CLAUDE_CODE_OAUTH_TOKEN in Actions secrets if you use GitHub Actions."
+Write-Host "  2) Bitbucket: set repository variables listed in README if you use Bitbucket Pipelines."
+Write-Host "  3) Slack: set the Interactivity Request URL to your real function URL, Install to Workspace,"
 Write-Host "     then run '/invite @dbschemacheck-gate' in your target Slack channel (SLACK_CHANNEL_ID)."

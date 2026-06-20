@@ -1,37 +1,28 @@
 // Supabase Edge Function: Slack interactivity endpoint for schema-gate approvals.
 //
-// Flow: a WARNING posts Slack buttons. When a user clicks approve or reject, Slack POSTs here.
-// This function verifies the Slack signature, then triggers repository_dispatch. The GitHub
-// Actions resume job uses GITHUB_TOKEN to update the `schema-gate` commit status.
-//
-// Required function secrets (supabase secrets set ...):
-//   SLACK_SIGNING_SECRET  - to verify Slack request signatures
-//   GH_DISPATCH_TOKEN     - GitHub token with Contents: read/write for repository_dispatch
-//   APPROVER_SLACK_IDS    - optional, comma-separated Slack user IDs allowed to decide
+// GitHub mode keeps the original repository_dispatch flow.
+// Bitbucket mode applies the Slack decision directly as the configured bot reviewer:
+// approve clears the bot's change request and approves the PR; reject requests changes.
 import { createHmac } from "node:crypto";
 
 const SLACK_SIGNING_SECRET = Deno.env.get("SLACK_SIGNING_SECRET") ?? "";
 const GH_TOKEN = Deno.env.get("GH_DISPATCH_TOKEN") ?? "";
+const BITBUCKET_API_USERNAME = Deno.env.get("BITBUCKET_API_USERNAME") ?? "";
+const BITBUCKET_API_TOKEN = Deno.env.get("BITBUCKET_API_TOKEN") ?? "";
 const APPROVER_IDS = (Deno.env.get("APPROVER_SLACK_IDS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-const GH_HEADERS = {
-  "Authorization": `Bearer ${GH_TOKEN}`,
-  "Accept": "application/vnd.github+json",
-  "Content-Type": "application/json",
-  "User-Agent": "dbschemacheck-slack-approval",
-  "X-GitHub-Api-Version": "2022-11-28",
-};
-
 type Decision = "approve" | "reject";
+type Provider = "github" | "bitbucket";
 
 type ButtonMeta = {
+  provider?: Provider;
   repo?: string;
   sha?: string;
   pr?: string;
   channel?: string;
 };
 
-type GitHubResult = {
+type HttpResult = {
   ok: boolean;
   status: number;
   detail: string;
@@ -41,7 +32,7 @@ type GitHubResult = {
 function verifySlackSignature(timestamp: string, signature: string, rawBody: string): boolean {
   if (!timestamp || !signature || !SLACK_SIGNING_SECRET) return false;
   const age = Math.abs(Date.now() / 1000 - Number(timestamp));
-  if (Number.isNaN(age) || age > 300) return false; // reject replays older than 5 minutes
+  if (Number.isNaN(age) || age > 300) return false;
   const hmac = createHmac("sha256", SLACK_SIGNING_SECRET).update(`v0:${timestamp}:${rawBody}`).digest("hex");
   const expected = `v0=${hmac}`;
   if (expected.length !== signature.length) return false;
@@ -58,26 +49,123 @@ function isValidSha(sha: string): boolean {
   return /^[0-9a-f]{40}$/i.test(sha);
 }
 
+function isValidPullRequestId(pr: string): boolean {
+  return /^[0-9]+$/.test(pr);
+}
+
 function cleanForSlack(text: string, maxLength: number): string {
   return text.replace(/[`<>]/g, "").slice(0, maxLength);
 }
 
-async function ghPost(path: string, body: unknown): Promise<GitHubResult> {
-  const url = `https://api.github.com${path}`;
+function githubHeaders(): HeadersInit {
+  return {
+    "Authorization": `Bearer ${GH_TOKEN}`,
+    "Accept": "application/vnd.github+json",
+    "Content-Type": "application/json",
+    "User-Agent": "dbschemacheck-slack-approval",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+function bitbucketHeaders(): HeadersInit {
+  const encoded = btoa(`${BITBUCKET_API_USERNAME}:${BITBUCKET_API_TOKEN}`);
+  return {
+    "Authorization": `Basic ${encoded}`,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+  };
+}
+
+async function postJson(url: string, headers: HeadersInit, body?: unknown): Promise<HttpResult> {
   try {
-    const res = await fetch(url, { method: "POST", headers: GH_HEADERS, body: JSON.stringify(body) });
+    const res = await fetch(url, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const detail = res.ok ? "" : cleanForSlack(await res.text(), 300);
-    if (!res.ok) console.error(`GitHub API ${url} -> ${res.status}: ${detail}`);
+    if (!res.ok) console.error(`POST ${url} -> ${res.status}: ${detail}`);
     return { ok: res.ok, status: res.status, detail, url };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    console.error(`GitHub API ${url} failed: ${detail}`);
+    console.error(`POST ${url} failed: ${detail}`);
     return { ok: false, status: 0, detail: cleanForSlack(detail, 300), url };
   }
 }
 
-async function dispatchDecision(repo: string, decision: Decision, pr: string, sha: string, approver: string) {
-  return await ghPost(`/repos/${repo}/dispatches`, { event_type: "schema-approval", client_payload: { decision, pr, sha, approver } });
+async function deleteOptional(url: string, headers: HeadersInit): Promise<HttpResult> {
+  try {
+    const res = await fetch(url, { method: "DELETE", headers });
+    if (res.ok || res.status === 400 || res.status === 404) {
+      return { ok: true, status: res.status, detail: "", url };
+    }
+
+    const detail = cleanForSlack(await res.text(), 300);
+    console.error(`DELETE ${url} -> ${res.status}: ${detail}`);
+    return { ok: false, status: res.status, detail, url };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`DELETE ${url} failed: ${detail}`);
+    return { ok: false, status: 0, detail: cleanForSlack(detail, 300), url };
+  }
+}
+
+async function getJson(url: string, headers: HeadersInit): Promise<{ result: HttpResult; data?: Record<string, unknown> }> {
+  try {
+    const res = await fetch(url, { method: "GET", headers });
+    const text = await res.text();
+    if (!res.ok) {
+      const detail = cleanForSlack(text, 300);
+      console.error(`GET ${url} -> ${res.status}: ${detail}`);
+      return { result: { ok: false, status: res.status, detail, url } };
+    }
+    return { result: { ok: true, status: res.status, detail: "", url }, data: JSON.parse(text) as Record<string, unknown> };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`GET ${url} failed: ${detail}`);
+    return { result: { ok: false, status: 0, detail: cleanForSlack(detail, 300), url } };
+  }
+}
+
+async function dispatchGitHubDecision(repo: string, decision: Decision, pr: string, sha: string, approver: string): Promise<HttpResult> {
+  if (!GH_TOKEN) {
+    return { ok: false, status: 0, detail: "GH_DISPATCH_TOKEN is not configured", url: "https://api.github.com" };
+  }
+
+  return await postJson(`https://api.github.com/repos/${repo}/dispatches`, githubHeaders(), {
+    event_type: "schema-approval",
+    client_payload: { decision, pr, sha, approver },
+  });
+}
+
+async function applyBitbucketDecision(repo: string, decision: Decision, pr: string, sha: string): Promise<HttpResult> {
+  if (!BITBUCKET_API_USERNAME || !BITBUCKET_API_TOKEN) {
+    return { ok: false, status: 0, detail: "Bitbucket API credentials are not configured", url: "https://api.bitbucket.org" };
+  }
+
+  const [workspace, repoSlug] = repo.split("/");
+  const baseUrl = `https://api.bitbucket.org/2.0/repositories/${workspace}/${repoSlug}/pullrequests/${pr}`;
+  const headers = bitbucketHeaders();
+  const current = await getJson(baseUrl, headers);
+  if (!current.result.ok) return current.result;
+
+  const source = current.data?.source as Record<string, unknown> | undefined;
+  const commit = source?.commit as Record<string, unknown> | undefined;
+  const currentHash = String(commit?.hash ?? "");
+  if (currentHash.toLowerCase() !== sha.toLowerCase()) {
+    return {
+      ok: false,
+      status: 409,
+      detail: `PR head changed from ${sha.slice(0, 7)} to ${currentHash.slice(0, 7)}; rerun the schema check`,
+      url: baseUrl,
+    };
+  }
+
+  if (decision === "approve") {
+    const clearChangeRequest = await deleteOptional(`${baseUrl}/request-changes`, headers);
+    if (!clearChangeRequest.ok) return clearChangeRequest;
+    return await postJson(`${baseUrl}/approve`, headers);
+  }
+
+  const clearApproval = await deleteOptional(`${baseUrl}/approve`, headers);
+  if (!clearApproval.ok) return clearApproval;
+  return await postJson(`${baseUrl}/request-changes`, headers);
 }
 
 async function updateSlackMessage(responseUrl: string, text: string) {
@@ -89,14 +177,12 @@ async function updateSlackMessage(responseUrl: string, text: string) {
   });
 }
 
-function githubFailureMessage(userId: string, decisionText: string, result: GitHubResult, repo: string, sha: string): string {
-  const statusText = result.status === 0 ? "network error" : `HTTP ${result.status}`;
-  const shortSha = sha.slice(0, 7);
-  const detail = result.detail ? ` GitHub response: \`${cleanForSlack(result.detail, 180)}\`` : "";
-  return `:warning: <@${userId}> 按了 *${decisionText}*，但無法觸發 GitHub repository_dispatch（${statusText}）。PR 仍會維持 pending。請確認 Supabase secret \`GH_DISPATCH_TOKEN\` 是最新 token，且對 \`${repo}\` 具備 Contents: read/write。commit: \`${shortSha}\`.${detail}`;
+function failureMessage(userId: string, decisionText: string, provider: Provider, result: HttpResult, repo: string, sha: string): string {
+  const statusText = result.status === 0 ? "network/configuration error" : `HTTP ${result.status}`;
+  const detail = result.detail ? ` Response: \`${cleanForSlack(result.detail, 180)}\`` : "";
+  return `:warning: <@${userId}> selected *${decisionText}*, but ${provider} could not be updated (${statusText}). Repo: \`${repo}\`, commit: \`${sha.slice(0, 7)}\`.${detail}`;
 }
 
-// Performs the decision side effects. Runs out-of-band after the 200 ACK via waitUntil.
 async function processDecision(payload: Record<string, unknown>) {
   const action = (payload.actions as Array<Record<string, unknown>> | undefined)?.[0];
   const decision = action?.action_id as Decision | undefined;
@@ -104,12 +190,12 @@ async function processDecision(payload: Record<string, unknown>) {
   const responseUrl = payload.response_url as string;
 
   if (decision !== "approve" && decision !== "reject") {
-    await updateSlackMessage(responseUrl, `:warning: <@${userId}> 收到未知決策，未變更 schema-gate。`);
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Unknown schema approval decision. No gate state changed.`);
     return;
   }
 
   if (APPROVER_IDS.length > 0 && !APPROVER_IDS.includes(userId)) {
-    await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> 無核准權限，決策未生效。`);
+    await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> You are not allowed to approve or reject this schema warning.`);
     return;
   }
 
@@ -117,30 +203,36 @@ async function processDecision(payload: Record<string, unknown>) {
   try {
     meta = JSON.parse((action?.value as string | undefined) ?? "{}") as ButtonMeta;
   } catch {
-    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕內容無法解析，未變更 schema-gate。`);
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack button metadata could not be parsed. No gate state changed.`);
     return;
   }
 
+  const provider = meta.provider ?? "github";
   const repo = (meta.repo ?? "").trim();
   const sha = (meta.sha ?? "").trim();
-  const pr = String(meta.pr ?? "");
+  const pr = String(meta.pr ?? "").trim();
 
-  if (!isValidRepo(repo) || !isValidSha(sha)) {
-    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack 按鈕缺少有效 repo 或 commit SHA，未變更 schema-gate。請重新執行 DB Schema Check 產生新的 WARNING 訊息。repo=\`${cleanForSlack(repo, 80)}\`, sha=\`${cleanForSlack(sha, 80)}\``);
+  const validProvider = provider === "github" || provider === "bitbucket";
+  const validPullRequest = provider === "github" ? pr === "" || isValidPullRequestId(pr) : isValidPullRequestId(pr);
+  if (!validProvider || !isValidRepo(repo) || !isValidSha(sha) || !validPullRequest) {
+    await updateSlackMessage(responseUrl, `:warning: <@${userId}> Slack button metadata is invalid. No gate state changed. repo=\`${cleanForSlack(repo, 80)}\`, sha=\`${cleanForSlack(sha, 80)}\`, pr=\`${cleanForSlack(pr, 20)}\``);
     return;
   }
 
-  const result = await dispatchDecision(repo, decision, pr, sha, userId);
-  const decisionText = decision === "approve" ? "放行" : "拒絕";
+  const result = provider === "bitbucket"
+    ? await applyBitbucketDecision(repo, decision, pr, sha)
+    : await dispatchGitHubDecision(repo, decision, pr, sha, userId);
+
+  const decisionText = decision === "approve" ? "Approve" : "Reject";
   if (!result.ok) {
-    await updateSlackMessage(responseUrl, githubFailureMessage(userId, decisionText, result, repo, sha));
+    await updateSlackMessage(responseUrl, failureMessage(userId, decisionText, provider, result, repo, sha));
     return;
   }
 
   if (decision === "approve") {
-    await updateSlackMessage(responseUrl, `:white_check_mark: 已由 <@${userId}> *放行*。已送出 GitHub Actions resume job，將由 workflow 把 schema-gate 更新為 success。`);
+    await updateSlackMessage(responseUrl, `:white_check_mark: <@${userId}> approved the schema warning. ${provider} has been updated for \`${repo}@${sha.slice(0, 7)}\`.`);
   } else {
-    await updateSlackMessage(responseUrl, `:no_entry: 已由 <@${userId}> *拒絕*。已送出 GitHub Actions resume job，將由 workflow 把 schema-gate 更新為 failure。`);
+    await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> rejected the schema warning. ${provider} now requests changes for \`${repo}@${sha.slice(0, 7)}\`.`);
   }
 }
 
@@ -152,14 +244,11 @@ Deno.serve(async (req) => {
   const sig = req.headers.get("x-slack-signature") ?? "";
   if (!verifySlackSignature(ts, sig, rawBody)) return new Response("invalid signature", { status: 401 });
 
-  // Slack sends application/x-www-form-urlencoded with a `payload` field holding the JSON.
   const payloadRaw = new URLSearchParams(rawBody).get("payload");
   if (!payloadRaw) return new Response("no payload", { status: 400 });
-  const payload = JSON.parse(payloadRaw);
+  const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
 
-  // ACK immediately to stay within Slack's 3-second window; finish the work in the background.
-  // EdgeRuntime is provided by the Supabase Edge runtime.
-  // @ts-ignore - EdgeRuntime global is not in the default TS lib.
-  EdgeRuntime.waitUntil(processDecision(payload).catch((e) => console.error("processDecision failed", e)));
+  // @ts-ignore - EdgeRuntime global is provided by the Supabase Edge runtime.
+  EdgeRuntime.waitUntil(processDecision(payload).catch((error) => console.error("processDecision failed", error)));
   return new Response("ok", { status: 200 });
 });
