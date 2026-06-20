@@ -177,10 +177,10 @@ jobs:
       - name: Deploy (placeholder) on approve
         if: ${{ github.event.client_payload.decision == 'approve' }}
         run: |
-          echo "Warning approved in Slack; continuing the merge/deploy flow (placeholder)."
+          echo "✅ Warning approved in Slack — continuing the merge/deploy flow (placeholder)."
           echo "Deploying commit ${{ github.event.client_payload.sha }} ..."
 
       - name: Cancelled on reject
         if: ${{ github.event.client_payload.decision == 'reject' }}
         run: |
-          echo "Warning rejected in Slack; this CICD run is cancelled."
+          echo "⛔ Warning rejected in Slack — this CICD run is cancelled."
