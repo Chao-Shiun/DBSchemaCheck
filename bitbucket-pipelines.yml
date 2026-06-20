@@ -1,0 +1,14 @@
+image: node:20-bookworm
+
+clone:
+  depth: full
+
+pipelines:
+  pull-requests:
+    "**":
+      - step:
+          name: DB schema review when reviewer is selected
+          caches:
+            - node
+          script:
+            - bash ci/bitbucket-schema-review.sh

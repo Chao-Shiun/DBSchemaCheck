@@ -4,12 +4,13 @@
 
 This repository demonstrates CI-stage schema drift checks for a .NET payment sample backed by Supabase PostgreSQL.
 
-- `.github/workflows/schema-review.yml` defines the pull request schema gate and Slack notification flow.
+- `.github/workflows/schema-review.yml` defines the GitHub pull request schema gate and Slack notification flow.
+- `bitbucket-pipelines.yml` defines the Bitbucket reviewer-triggered schema gate.
 - `src/PaymentDemo/` contains the .NET 8 console sample using Npgsql and Dapper.
 - `db/schema.sql` is the source-of-truth PostgreSQL schema; `db/seed.sql` holds sample data.
-- `ci/` contains the AI review prompt, MCP toolbox config, and Slack notification script.
+- `ci/` contains the AI review prompt, MCP toolbox config, Slack notification script, and Bitbucket review helpers.
 - `supabase/functions/slack-approval/` contains the Deno Edge Function for Slack callbacks.
-- `scripts/setup.ps1` provisions secrets and deploys the Edge Function.
+- `scripts/setup.ps1` provisions GitHub/Supabase secrets and deploys the Edge Function.
 - `demo/DEMO.md` documents PASS, WARNING, and ERROR scenarios.
 
 ## Build, Test, and Development Commands
@@ -37,4 +38,4 @@ Recent commits use Conventional Commits such as `feat:` and `fix:`. Keep message
 
 ## Security & Configuration Tips
 
-Treat GitHub Actions secrets, Supabase secrets, Slack tokens, and database URLs as sensitive. Keep runtime configuration in GitHub/Supabase secret stores or ignored local files. The schema gate uses live PostgreSQL metadata, so verify table names, columns, constraints, and indexes before changing data access code.
+Treat GitHub Actions secrets, Bitbucket repository variables, Supabase secrets, Slack tokens, and database URLs as sensitive. Keep runtime configuration in CI/Supabase secret stores or ignored local files. The schema gate uses live PostgreSQL metadata, so verify table names, columns, constraints, and indexes before changing data access code.
