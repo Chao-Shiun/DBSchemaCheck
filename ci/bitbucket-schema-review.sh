@@ -2,7 +2,6 @@
 # Runs the schema review only when the configured DB-check reviewer is selected on the PR.
 set -euo pipefail
 
-TOOLBOX_VERSION="${TOOLBOX_VERSION:-1.4.0}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 
 : "${BITBUCKET_PR_ID:?BITBUCKET_PR_ID is required; this script runs only for pull requests}"
@@ -29,7 +28,7 @@ fi
 : "${BITBUCKET_API_TOKEN:?BITBUCKET_API_TOKEN is required}"
 
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl git jq
+apt-get install -y --no-install-recommends ca-certificates curl git jq postgresql-client
 
 matches_csv() {
   local candidate="${1:?candidate required}"
@@ -121,6 +120,120 @@ else
 fi
 
 export POSTGRES_QUERY_PARAMS="${POSTGRES_QUERY_PARAMS:-sslmode=require}"
+POSTGRES_SSLMODE="${POSTGRES_SSLMODE:-$(printf '%s' "$POSTGRES_QUERY_PARAMS" | tr '&' '\n' | awk -F= '$1 == "sslmode" { print $2; exit }')}"
+POSTGRES_SSLMODE="${POSTGRES_SSLMODE:-require}"
+
+write_live_schema_snapshot() {
+  local output="${1:?output required}"
+  local tmp="${output}.tmp"
+
+  rm -f "$tmp"
+  export PGPASSWORD="$POSTGRES_PASSWORD"
+  export PGSSLMODE="$POSTGRES_SSLMODE"
+
+  if ! psql -v ON_ERROR_STOP=1 -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -At > "$tmp" <<'SQL'
+with
+tables as (
+  select coalesce(jsonb_agg(to_jsonb(t) order by table_schema, table_name), '[]'::jsonb) as data
+  from (
+    select table_schema, table_name, table_type
+    from information_schema.tables
+    where table_schema not in ('pg_catalog', 'information_schema')
+  ) t
+),
+columns as (
+  select coalesce(jsonb_agg(to_jsonb(c) order by table_schema, table_name, ordinal_position), '[]'::jsonb) as data
+  from (
+    select
+      table_schema,
+      table_name,
+      column_name,
+      ordinal_position,
+      data_type,
+      udt_name,
+      is_nullable,
+      column_default,
+      character_maximum_length,
+      numeric_precision,
+      numeric_scale,
+      datetime_precision
+    from information_schema.columns
+    where table_schema not in ('pg_catalog', 'information_schema')
+  ) c
+),
+constraints as (
+  select coalesce(jsonb_agg(to_jsonb(c) order by table_schema, table_name, constraint_name, ordinal_position nulls last), '[]'::jsonb) as data
+  from (
+    select
+      tc.table_schema,
+      tc.table_name,
+      tc.constraint_name,
+      tc.constraint_type,
+      kcu.column_name,
+      kcu.ordinal_position,
+      ccu.table_schema as foreign_table_schema,
+      ccu.table_name as foreign_table_name,
+      ccu.column_name as foreign_column_name,
+      cc.check_clause
+    from information_schema.table_constraints tc
+    left join information_schema.key_column_usage kcu
+      on tc.constraint_schema = kcu.constraint_schema
+      and tc.constraint_name = kcu.constraint_name
+      and tc.table_schema = kcu.table_schema
+      and tc.table_name = kcu.table_name
+    left join information_schema.constraint_column_usage ccu
+      on tc.constraint_schema = ccu.constraint_schema
+      and tc.constraint_name = ccu.constraint_name
+    left join information_schema.check_constraints cc
+      on tc.constraint_schema = cc.constraint_schema
+      and tc.constraint_name = cc.constraint_name
+    where tc.table_schema not in ('pg_catalog', 'information_schema')
+  ) c
+),
+indexes as (
+  select coalesce(jsonb_agg(to_jsonb(i) order by schemaname, tablename, indexname), '[]'::jsonb) as data
+  from (
+    select schemaname, tablename, indexname, indexdef
+    from pg_indexes
+    where schemaname not in ('pg_catalog', 'information_schema')
+  ) i
+),
+views as (
+  select coalesce(jsonb_agg(to_jsonb(v) order by schemaname, viewname), '[]'::jsonb) as data
+  from (
+    select schemaname, viewname, definition
+    from pg_views
+    where schemaname not in ('pg_catalog', 'information_schema')
+  ) v
+)
+select jsonb_pretty(jsonb_build_object(
+  'generated_at', now(),
+  'database', current_database(),
+  'schemas', (
+    select coalesce(jsonb_agg(nspname order by nspname), '[]'::jsonb)
+    from pg_namespace
+    where nspname not like 'pg_%'
+      and nspname <> 'information_schema'
+  ),
+  'tables', (select data from tables),
+  'columns', (select data from columns),
+  'constraints', (select data from constraints),
+  'indexes', (select data from indexes),
+  'views', (select data from views)
+))::text;
+SQL
+  then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if ! jq empty "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  mv "$tmp" "$output"
+}
 
 git fetch origin "${BITBUCKET_PR_DESTINATION_BRANCH}" || true
 if git rev-parse "origin/${BITBUCKET_PR_DESTINATION_BRANCH}" >/dev/null 2>&1; then
@@ -132,23 +245,34 @@ fi
 echo "----- changed source diff -----"
 head -n 200 pr.diff || true
 
-curl -fsSL -o toolbox "https://storage.googleapis.com/mcp-toolbox-for-databases/v${TOOLBOX_VERSION}/linux/amd64/toolbox"
-chmod +x toolbox
+rm -f verdict.json live-schema.json live-schema.json.tmp
 
-if ! command -v claude >/dev/null 2>&1; then
-  npm install -g @anthropic-ai/claude-code
+schema_snapshot_ready=false
+echo "Writing live PostgreSQL schema snapshot to live-schema.json..."
+if write_live_schema_snapshot "live-schema.json"; then
+  schema_snapshot_ready=true
+  echo "----- live schema snapshot summary -----"
+  jq '{tables: (.tables | length), columns: (.columns | length), constraints: (.constraints | length), indexes: (.indexes | length), views: (.views | length)}' live-schema.json
+else
+  echo "Live PostgreSQL schema snapshot failed; writing a blocking schema verdict." >&2
+  printf '%s' '{"summary":"live PostgreSQL schema could not be read from the configured database","errors":[{"category":"internal","file":"-","line":0,"code_snippet":"-","problem":"live PostgreSQL schema snapshot failed before AI review","schema_evidence":"psql could not read information_schema/pg_catalog from the configured POSTGRES_* connection","suggestion":"check POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DATABASE, POSTGRES_USER, POSTGRES_PASSWORD, SSL mode, and database network access from Bitbucket Pipelines"}],"warnings":[]}' > verdict.json
 fi
 
-set +e
-env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the toolbox MCP tools to introspect the live PostgreSQL schema, then write verdict.json at the repository root." \
-  --mcp-config ci/mcp-config.json \
-  --model "$CLAUDE_MODEL" \
-  --allowedTools "mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
-claude_exit=$?
-set -e
+if [ "$schema_snapshot_ready" = "true" ]; then
+  if ! command -v claude >/dev/null 2>&1; then
+    npm install -g @anthropic-ai/claude-code
+  fi
 
-if [ "$claude_exit" -ne 0 ]; then
-  echo "Claude schema review exited with status ${claude_exit}; verdict.json will decide the gate if present." >&2
+  set +e
+  env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. The live PostgreSQL schema snapshot is in live-schema.json; treat it as authoritative and do not fall back to db/schema.sql. Write verdict.json at the repository root." \
+    --model "$CLAUDE_MODEL" \
+    --allowedTools "Read,Write,Bash(git diff:*),Bash(cat:*)"
+  claude_exit=$?
+  set -e
+
+  if [ "$claude_exit" -ne 0 ]; then
+    echo "Claude schema review exited with status ${claude_exit}; verdict.json will decide the gate if present." >&2
+  fi
 fi
 
 if [ ! -f verdict.json ]; then

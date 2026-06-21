@@ -15,13 +15,9 @@ Focus on two outcomes:
 ## Inputs available to you
 
 - `pr.diff` - the unified diff of changed files under `src/` (read it with the Read tool).
-- The live database schema, via the `toolbox` MCP server (PostgreSQL / Supabase):
-  - `mcp__toolbox__list_tables` - tables with columns, types, nullability, constraints.
-  - `mcp__toolbox__list_indexes` - existing indexes.
-  - `mcp__toolbox__list_views` - views.
-  - `mcp__toolbox__execute_sql` - run read-only queries against metadata tables such as
-    `information_schema` or `pg_catalog` when the other tools do not give enough detail.
-  - `mcp__toolbox__get_query_plan` - EXPLAIN a query without executing it.
+- `live-schema.json` - the authoritative live PostgreSQL/Supabase metadata snapshot captured
+  by CI from `information_schema`, `pg_catalog`, `pg_indexes`, and `pg_views`.
+  It includes schemas, tables, columns, constraints, indexes, and views.
 
 ## Method
 
@@ -30,13 +26,14 @@ Focus on two outcomes:
    usage, parameters (`AddWithValue`, `NpgsqlParameter`, anonymous objects, `DynamicParameters`),
    table names, column names, inserted/updated values, filters, joins, ordering, grouping,
    limits, model / `DataReader` mappings, and status/check/enum values.
-2. For each touched object, fetch the real live schema with the toolbox tools. Do not assume.
-   Verify table and column names, data types, lengths, nullability, defaults, identity/generated
-   columns, CHECK constraints, primary keys, unique constraints, foreign keys, and indexes.
+2. For each touched object, read and use `live-schema.json`. Treat it as the real live schema.
+   Do not fall back to `db/schema.sql`. Verify table and column names, data types, lengths,
+   nullability, defaults, identity/generated columns, CHECK constraints, primary keys, unique
+   constraints, foreign keys, and indexes.
 3. Reason about runtime behavior against the live schema, then separately reason about query,
    Dapper, and ADO.NET performance.
-4. Use `get_query_plan` for changed queries when index usage is not obvious, or when the query
-   adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk access.
+4. If `live-schema.json` is missing or unreadable, report an `internal` error in `errors`
+   instead of reviewing against a local schema file.
 
 ## Error checks - execution failures or security risks
 

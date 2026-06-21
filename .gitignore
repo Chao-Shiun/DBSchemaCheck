@@ -5,6 +5,7 @@ obj/
 # CI runtime artifacts (never commit these)
 toolbox
 pr.diff
+live-schema.json
 verdict.json
 ci/mcp-config.runtime.json
 
