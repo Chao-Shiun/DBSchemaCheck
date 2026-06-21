@@ -45,12 +45,39 @@ public sealed class PaymentRepository
         return rows.ToList();
     }
 
-    // Deliberate syntax-error demo for DB schema gate validation.
-    public async Task<IReadOnlyList<Payment>> GetPaymentsWithBrokenSqlAsync(long userId)
+    // Corrected version of the previous syntax-error demo.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsWithFixedSqlAsync(long userId)
     {
-        const string sql = "select id, from payments where user_id = @userId";
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where user_id = @userId";
         await using var connection = CreateConnection();
         var rows = await connection.QueryAsync<Payment>(sql, new { userId });
+        return rows.ToList();
+    }
+
+    // Deliberate warning demo: SELECT * fetches full rows when only payment IDs are needed.
+    public async Task<IReadOnlyList<long>> GetPaymentIdsWithSelectStarAsync(long userId)
+    {
+        const string sql = "select * from payments where user_id = @userId order by created_at desc";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<long>(sql, new { userId });
+        return rows.ToList();
+    }
+
+    // Deliberate warning demo: lower(status) makes the indexed status predicate non-sargable.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsByLoweredStatusAsync(string status)
+    {
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where lower(status) = lower(@status)";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { status });
+        return rows.ToList();
+    }
+
+    // Deliberate warning demo: Dapper expands IN @ids into one parameter per item.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsByExpandedInListAsync(long[] ids)
+    {
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where id in @ids";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { ids });
         return rows.ToList();
     }
 }
