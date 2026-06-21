@@ -50,6 +50,10 @@ function isValidSha(sha: string): boolean {
   return /^[0-9a-f]{40}$/i.test(sha);
 }
 
+function isValidCommitHash(hash: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(hash);
+}
+
 function isValidPullRequestId(pr: string): boolean {
   return /^[0-9]+$/.test(pr);
 }
@@ -74,6 +78,20 @@ function resolveProvider(meta: ButtonMeta, pr: string): Provider {
 
 function providerLabel(provider: Provider): string {
   return provider === "bitbucket" ? "Bitbucket" : "GitHub";
+}
+
+function shortHash(hash: string): string {
+  return hash ? hash.slice(0, 12) : "unknown";
+}
+
+function commitHashesMatch(expected: string, actual: string): boolean {
+  const normalizedExpected = expected.toLowerCase();
+  const normalizedActual = actual.toLowerCase();
+  if (normalizedExpected === normalizedActual) return true;
+  if (!isValidCommitHash(normalizedExpected) || !isValidCommitHash(normalizedActual)) return false;
+
+  const shortestLength = Math.min(normalizedExpected.length, normalizedActual.length);
+  return shortestLength >= 7 && (normalizedExpected.startsWith(normalizedActual) || normalizedActual.startsWith(normalizedExpected));
 }
 
 function githubHeaders(): HeadersInit {
@@ -167,11 +185,11 @@ async function applyBitbucketDecision(repo: string, decision: Decision, pr: stri
   const source = current.data?.source as Record<string, unknown> | undefined;
   const commit = source?.commit as Record<string, unknown> | undefined;
   const currentHash = String(commit?.hash ?? "");
-  if (currentHash.toLowerCase() !== sha.toLowerCase()) {
+  if (!commitHashesMatch(sha, currentHash)) {
     return {
       ok: false,
       status: 409,
-      detail: `PR head changed from ${sha.slice(0, 7)} to ${currentHash.slice(0, 7)}; rerun the schema check`,
+      detail: `PR head changed from ${shortHash(sha)} to ${shortHash(currentHash)}; rerun the schema check`,
       url: baseUrl,
     };
   }
