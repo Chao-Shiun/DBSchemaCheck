@@ -75,8 +75,10 @@ echo "DB-check reviewer selected; running schema review."
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   echo "Using Claude Code OAuth token for schema review."
   unset ANTHROPIC_API_KEY
+  claude_env=()
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Using Anthropic API key for schema review."
+  claude_env=("CLAUDE_CODE_SIMPLE=1")
 else
   echo "CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is required" >&2
   exit 1
@@ -102,7 +104,7 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 set +e
-CLAUDE_CODE_SIMPLE=1 claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the toolbox MCP tools to introspect the live PostgreSQL schema, then write verdict.json at the repository root." \
+env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the toolbox MCP tools to introspect the live PostgreSQL schema, then write verdict.json at the repository root." \
   --mcp-config ci/mcp-config.json \
   --model "$CLAUDE_MODEL" \
   --allowedTools "mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
