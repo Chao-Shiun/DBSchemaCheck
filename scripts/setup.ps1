@@ -75,7 +75,7 @@ supabase functions deploy slack-approval --use-api --no-verify-jwt --project-ref
 $fnTmp = New-TemporaryFile
 try {
   $fnLines = @("SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])")
-  foreach ($optionalSecret in @("GH_DISPATCH_TOKEN", "BITBUCKET_API_USERNAME", "BITBUCKET_API_TOKEN", "APPROVER_SLACK_IDS")) {
+  foreach ($optionalSecret in @("BITBUCKET_API_USERNAME", "BITBUCKET_API_TOKEN", "DEFAULT_SCM_PROVIDER", "GH_DISPATCH_TOKEN", "APPROVER_SLACK_IDS")) {
     if ($vars.ContainsKey($optionalSecret) -and -not [string]::IsNullOrWhiteSpace($vars[$optionalSecret])) {
       $fnLines += "$optionalSecret=$($vars[$optionalSecret])"
     }
