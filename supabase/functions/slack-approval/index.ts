@@ -109,14 +109,25 @@ function bitbucketHeaders(): HeadersInit {
   return {
     "Authorization": `Basic ${encoded}`,
     "Accept": "application/json",
-    "Content-Type": "application/json",
   };
+}
+
+function formatHttpErrorDetail(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const error = parsed.error as Record<string, unknown> | undefined;
+    const message = String(error?.message ?? parsed.message ?? text);
+    const detail = String(error?.detail ?? "");
+    return cleanForSlack(detail ? `${message}: ${detail}` : message, 300);
+  } catch {
+    return cleanForSlack(text, 300);
+  }
 }
 
 async function postJson(url: string, headers: HeadersInit, body?: unknown): Promise<HttpResult> {
   try {
     const res = await fetch(url, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
-    const detail = res.ok ? "" : cleanForSlack(await res.text(), 300);
+    const detail = res.ok ? "" : formatHttpErrorDetail(await res.text());
     if (!res.ok) console.error(`POST ${url} -> ${res.status}: ${detail}`);
     return { ok: res.ok, status: res.status, detail, url };
   } catch (error) {
@@ -140,7 +151,7 @@ async function deleteOptional(url: string, headers: HeadersInit): Promise<HttpRe
       return { ok: true, status: res.status, detail: "", url };
     }
 
-    const detail = cleanForSlack(await res.text(), 300);
+    const detail = formatHttpErrorDetail(await res.text());
     console.error(`DELETE ${url} -> ${res.status}: ${detail}`);
     return { ok: false, status: res.status, detail, url };
   } catch (error) {
@@ -155,7 +166,7 @@ async function getJson(url: string, headers: HeadersInit): Promise<{ result: Htt
     const res = await fetch(url, { method: "GET", headers });
     const text = await res.text();
     if (!res.ok) {
-      const detail = cleanForSlack(text, 300);
+      const detail = formatHttpErrorDetail(text);
       console.error(`GET ${url} -> ${res.status}: ${detail}`);
       return { result: { ok: false, status: res.status, detail, url } };
     }
