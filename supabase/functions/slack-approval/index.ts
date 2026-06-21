@@ -126,6 +126,13 @@ async function postJson(url: string, headers: HeadersInit, body?: unknown): Prom
   }
 }
 
+async function postDecision(url: string, headers: HeadersInit, alreadySetMessage: string): Promise<HttpResult> {
+  const result = await postJson(url, headers);
+  if (result.ok || result.status !== 400) return result;
+
+  return { ok: true, status: result.status, detail: alreadySetMessage, url: result.url };
+}
+
 async function deleteOptional(url: string, headers: HeadersInit): Promise<HttpResult> {
   try {
     const res = await fetch(url, { method: "DELETE", headers });
@@ -197,12 +204,12 @@ async function applyBitbucketDecision(repo: string, decision: Decision, pr: stri
   if (decision === "approve") {
     const clearChangeRequest = await deleteOptional(`${baseUrl}/request-changes`, headers);
     if (!clearChangeRequest.ok) return clearChangeRequest;
-    return await postJson(`${baseUrl}/approve`, headers);
+    return await postDecision(`${baseUrl}/approve`, headers, "Bitbucket already has this approval decision");
   }
 
   const clearApproval = await deleteOptional(`${baseUrl}/approve`, headers);
   if (!clearApproval.ok) return clearApproval;
-  return await postJson(`${baseUrl}/request-changes`, headers);
+  return await postDecision(`${baseUrl}/request-changes`, headers, "Bitbucket already has this request-changes decision");
 }
 
 async function updateSlackMessage(responseUrl: string, text: string) {
