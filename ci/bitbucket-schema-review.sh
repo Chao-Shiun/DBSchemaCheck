@@ -71,7 +71,16 @@ echo "DB-check reviewer selected; running schema review."
 : "${POSTGRES_DATABASE:?POSTGRES_DATABASE is required}"
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
-: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}"
+
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "Using Claude Code OAuth token for schema review."
+  unset ANTHROPIC_API_KEY
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "Using Anthropic API key for schema review."
+else
+  echo "CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is required" >&2
+  exit 1
+fi
 
 export POSTGRES_QUERY_PARAMS="${POSTGRES_QUERY_PARAMS:-sslmode=require}"
 

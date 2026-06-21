@@ -97,10 +97,10 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 > 需先安裝並登入 `gh`、安裝 `supabase` CLI；`psql` 可選（沒有就到 Supabase SQL editor 手動貼 `db/schema.sql`）。
 
 ### 步驟 4（你做）：填入 Claude auth ⭐
-GitHub Actions 使用 Claude Code OAuth token；Bitbucket Pipelines 使用 Anthropic API key。兩者都刻意保留給你自己填。
+GitHub Actions 和 Bitbucket Pipelines 都可使用 Claude Code OAuth token；Bitbucket 也支援 Anthropic Console API key 作為備用。Token 刻意保留給你自己填。
 - **GitHub 指令**：`gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo Chao-Shiun/DBSchemaCheck`（執行後貼上 token，不會顯示在畫面）。
 - **GitHub 網頁**：repo →「**Settings → Secrets and variables → Actions → New repository secret**」→ Name 填 `CLAUDE_CODE_OAUTH_TOKEN`、Secret 填 token → Add secret。
-- **Bitbucket**：repo →「Repository settings → Repository variables」→ 新增 secured variable `ANTHROPIC_API_KEY`。
+- **Bitbucket**：repo →「Repository settings → Repository variables」→ 新增 secured variable `CLAUDE_CODE_OAUTH_TOKEN`。若不用公司 Claude Code 訂閱，可改填 Anthropic Console API key 到 `ANTHROPIC_API_KEY`。
   直達連結：`https://github.com/Chao-Shiun/DBSchemaCheck/settings/secrets/actions/new`
 
 ### 步驟 5（你做）：完成 Slack 串接
@@ -120,7 +120,8 @@ GitHub Actions 使用 Claude Code OAuth token；Bitbucket Pipelines 使用 Anthr
 - `BITBUCKET_API_USERNAME` / `BITBUCKET_API_TOKEN`：bot reviewer 帳號與 secured app password/API token。
 - `DB_CHECK_REVIEWER_UUID`、`DB_CHECK_REVIEWER_ACCOUNT_ID`、`DB_CHECK_REVIEWER_NICKNAME`、`DB_CHECK_REVIEWER_DISPLAY_NAME` 擇一或多個：指定哪個 reviewer 會觸發 DB check；可用逗號分隔多個值。
 - `POSTGRES_HOST`、`POSTGRES_PORT`、`POSTGRES_DATABASE`、`POSTGRES_USER`、`POSTGRES_PASSWORD`：給 toolbox 讀 Supabase PostgreSQL metadata。
-- `ANTHROPIC_API_KEY`：給 Bitbucket Pipelines 內的 Claude Code CLI 使用。
+- `CLAUDE_CODE_OAUTH_TOKEN`：給 Bitbucket Pipelines 內的 Claude Code CLI 使用公司 Claude Code 訂閱；若同時存在 `ANTHROPIC_API_KEY`，腳本會優先使用這個 token。
+- `ANTHROPIC_API_KEY`：可選；不用 Claude Code 訂閱時，改用 Anthropic Console API key。
 - `SLACK_BOT_TOKEN`、`SLACK_CHANNEL_ID`：WARNING 需要 Slack 放行/拒絕時必填。
 
 若要讓 Slack 按鈕能直接改 Bitbucket reviewer decision，也要把 `BITBUCKET_API_USERNAME` / `BITBUCKET_API_TOKEN` 設為 Supabase function secrets。
