@@ -124,6 +124,7 @@ GitHub Actions 和 Bitbucket Pipelines 都可使用 Claude Code OAuth token；Bi
 - `CLAUDE_CODE_OAUTH_TOKEN`：給 Bitbucket Pipelines 內的 Claude Code CLI 使用公司 Claude Code 訂閱；若同時存在 `ANTHROPIC_API_KEY`，腳本會優先使用這個 token。
 - `ANTHROPIC_API_KEY`：可選；不用 Claude Code 訂閱時，改用 Anthropic Console API key。
 - `SLACK_BOT_TOKEN`、`SLACK_CHANNEL_ID`：WARNING 需要 Slack 放行/拒絕時必填。
+- `DB_CHECK_REVIEWER_WAIT_ATTEMPTS` / `DB_CHECK_REVIEWER_WAIT_SECONDS`：可選；PR 建立時 Bitbucket 可能先啟動 pipeline、稍後才讓 reviewers 出現在 PR API。預設最多等 6 次、每次 10 秒，避免 DB Checker 已被選取但檢查被跳過。
 
 Slack 按鈕會以 Bitbucket 為主要流程；要能直接改 Bitbucket reviewer decision，需把 `BITBUCKET_API_USERNAME` / `BITBUCKET_API_TOKEN` 設為 Supabase function secrets。`DEFAULT_SCM_PROVIDER` 預設為 `bitbucket`。
 

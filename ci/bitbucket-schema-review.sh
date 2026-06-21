@@ -11,6 +11,8 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 : "${BITBUCKET_BRANCH:?BITBUCKET_BRANCH is required}"
 : "${BITBUCKET_COMMIT:?BITBUCKET_COMMIT is required}"
 : "${BITBUCKET_PR_DESTINATION_BRANCH:?BITBUCKET_PR_DESTINATION_BRANCH is required}"
+DB_CHECK_REVIEWER_WAIT_ATTEMPTS="${DB_CHECK_REVIEWER_WAIT_ATTEMPTS:-6}"
+DB_CHECK_REVIEWER_WAIT_SECONDS="${DB_CHECK_REVIEWER_WAIT_SECONDS:-10}"
 selector_configured=false
 for selector in DB_CHECK_REVIEWER_UUID DB_CHECK_REVIEWER_ACCOUNT_ID DB_CHECK_REVIEWER_NICKNAME DB_CHECK_REVIEWER_DISPLAY_NAME; do
   if [ -n "${!selector:-}" ]; then
@@ -44,23 +46,57 @@ matches_csv() {
   return 1
 }
 
-pr_json=$(curl -fsS "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}" \
-  -u "${BITBUCKET_API_USERNAME}:${BITBUCKET_API_TOKEN}" \
-  -H "Accept: application/json")
+is_positive_integer() {
+  printf '%s' "${1:-}" | grep -Eq '^[1-9][0-9]*$'
+}
+
+if ! is_positive_integer "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS"; then
+  echo "DB_CHECK_REVIEWER_WAIT_ATTEMPTS must be a positive integer." >&2
+  exit 2
+fi
+
+if ! is_positive_integer "$DB_CHECK_REVIEWER_WAIT_SECONDS"; then
+  echo "DB_CHECK_REVIEWER_WAIT_SECONDS must be a positive integer." >&2
+  exit 2
+fi
+
+fetch_pr_json() {
+  curl -fsS "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}" \
+    -u "${BITBUCKET_API_USERNAME}:${BITBUCKET_API_TOKEN}" \
+    -H "Accept: application/json"
+}
+
+has_db_check_reviewer() {
+  local pr_json="${1:?pr_json required}"
+  local uuid account_id nickname display_name
+  while IFS=$'\t' read -r uuid account_id nickname display_name; do
+    if matches_csv "$uuid" "${DB_CHECK_REVIEWER_UUID:-}" \
+      || matches_csv "$account_id" "${DB_CHECK_REVIEWER_ACCOUNT_ID:-}" \
+      || matches_csv "$nickname" "${DB_CHECK_REVIEWER_NICKNAME:-}" \
+      || matches_csv "$display_name" "${DB_CHECK_REVIEWER_DISPLAY_NAME:-}"; then
+      return 0
+    fi
+  done < <(printf '%s' "$pr_json" | jq -r '.reviewers[]? | [.uuid // "", .account_id // "", .nickname // "", .display_name // ""] | @tsv')
+
+  return 1
+}
 
 reviewer_selected=false
-while IFS=$'\t' read -r uuid account_id nickname display_name; do
-  if matches_csv "$uuid" "${DB_CHECK_REVIEWER_UUID:-}" \
-    || matches_csv "$account_id" "${DB_CHECK_REVIEWER_ACCOUNT_ID:-}" \
-    || matches_csv "$nickname" "${DB_CHECK_REVIEWER_NICKNAME:-}" \
-    || matches_csv "$display_name" "${DB_CHECK_REVIEWER_DISPLAY_NAME:-}"; then
+for attempt in $(seq 1 "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS"); do
+  pr_json="$(fetch_pr_json)"
+  if has_db_check_reviewer "$pr_json"; then
     reviewer_selected=true
     break
   fi
-done < <(printf '%s' "$pr_json" | jq -r '.reviewers[]? | [.uuid // "", .account_id // "", .nickname // "", .display_name // ""] | @tsv')
+
+  if [ "$attempt" -lt "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS" ]; then
+    echo "DB-check reviewer is not visible yet on PR #${BITBUCKET_PR_ID}; retrying in ${DB_CHECK_REVIEWER_WAIT_SECONDS}s (${attempt}/${DB_CHECK_REVIEWER_WAIT_ATTEMPTS})."
+    sleep "$DB_CHECK_REVIEWER_WAIT_SECONDS"
+  fi
+done
 
 if [ "$reviewer_selected" != "true" ]; then
-  echo "DB-check reviewer is not selected on PR #${BITBUCKET_PR_ID}; skipping schema review."
+  echo "DB-check reviewer is not selected on PR #${BITBUCKET_PR_ID} after ${DB_CHECK_REVIEWER_WAIT_ATTEMPTS} attempt(s); skipping schema review."
   exit 0
 fi
 
