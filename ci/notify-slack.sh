@@ -77,10 +77,10 @@ if [ -f "$VERDICT_FILE" ]; then
       ($value // "" | trunc($max) | gsub("`"; ""));
     def card(lbl; f):
       { type: "section", text: { type: "mrkdwn",
-          text: ("*" + lbl + "* `" + (f.category // "issue") + "` at `" + loc(f) + "`\n"
-                 + (if ((f.code_snippet // "") | length) > 0 then ("*Code:* `" + inline(f.code_snippet; 180) + "`\n") else "" end)
-                 + "*Problem:* " + ((f.problem // "No problem text provided.") | trunc(420)) + "\n"
-                 + "*Fix:* " + ((f.suggestion // "Check the CI logs for the full recommendation.") | trunc(260))) } };
+          text: ("*" + lbl + "* `" + (f.category // "issue") + "` at `" + loc(f) + "`\n\n"
+                 + (if ((f.code_snippet // "") | length) > 0 then ("*Code:*\n`" + inline(f.code_snippet; 180) + "`\n\n") else "" end)
+                 + "*Problem:*\n" + ((f.problem // "No problem text provided.") | trunc(420)) + "\n\n"
+                 + "*Suggested fix:*\n" + ((f.suggestion // "Check the CI logs for the full recommendation.") | trunc(260))) } };
     ( [ (.errors // [])[] | { l: "ERROR", f: . } ]
       + [ (.warnings // [])[] | { l: "WARNING", f: . } ] ) as $all
     | ($all[0:6]) as $shown
