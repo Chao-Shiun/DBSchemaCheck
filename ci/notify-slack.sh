@@ -16,9 +16,9 @@ COMMIT_SHA="${COMMIT_SHA:-}"
 REPO="${REPO:-}"
 
 case "$STATUS" in
-  pass) HEADER="Schema Check: SUCCESS" ;;
-  warning) HEADER="Schema Check: WARNING (approval required)" ;;
-  error) HEADER="Schema Check: FAILED" ;;
+  pass) HEADER="DB Schema Gate: PASSED" ;;
+  warning) HEADER="DB Schema Gate: WARNING" ;;
+  error) HEADER="DB Schema Gate: FAILED" ;;
   *) echo "unknown status: $STATUS" >&2; exit 2 ;;
 esac
 
@@ -34,30 +34,69 @@ blocks=$(jq -n --arg header "$HEADER" --arg meta "$META_CTX" '
     { type: "context", elements: [ { type: "mrkdwn", text: $meta } ] }
   ]')
 
+FALLBACK="$HEADER"
+
 if [ -f "$VERDICT_FILE" ]; then
   ERR_COUNT=$(jq '(.errors // []) | length' "$VERDICT_FILE")
   WARN_COUNT=$(jq '(.warnings // []) | length' "$VERDICT_FILE")
-  SUMMARY=$(jq -r '.summary // ""' "$VERDICT_FILE")
-  intro=$(jq -n --arg e "$ERR_COUNT" --arg w "$WARN_COUNT" --arg s "$SUMMARY" '
-    [ { type: "section", text: { type: "mrkdwn",
-        text: (if ($e == "0" and $w == "0") then "No schema issues found."
-               else ("*" + $e + "* error(s), *" + $w + "* warning(s)") end) } } ]
-    + (if ($s | length) > 0 then [ { type: "context", elements: [ { type: "mrkdwn", text: $s } ] } ] else [] end)
-    + [ { type: "divider" } ]')
+  FALLBACK="${HEADER}: ${ERR_COUNT} error(s), ${WARN_COUNT} warning(s)"
+  intro=$(jq -n --arg status "$STATUS" --arg e "$ERR_COUNT" --arg w "$WARN_COUNT" --arg provider "$SCM_PROVIDER" '
+    def count_label($n; $singular; $plural):
+      ($n | tonumber) as $count
+      | (($count | tostring) + " " + (if $count == 1 then $singular else $plural end));
+    def gate:
+      if $status == "error" then "Blocked - schema errors found"
+      elif $status == "warning" then "Waiting for Slack decision"
+      else "Passed"
+      end;
+    def action:
+      if $status == "error" then "Reviewer requested changes"
+      elif $status == "warning" then "Reviewer holds PR until approval"
+      else "Reviewer approved"
+      end;
+    [
+      { type: "section", fields: [
+          { type: "mrkdwn", text: ("*Gate*\n" + gate) },
+          { type: "mrkdwn", text: ("*Findings*\n" + count_label($e; "error"; "errors") + ", " + count_label($w; "warning"; "warnings")) },
+          { type: "mrkdwn", text: ("*Action*\n" + action) },
+          { type: "mrkdwn", text: ("*Provider*\n" + $provider) }
+        ] },
+      { type: "divider" }
+    ]')
   cards=$(jq '
+    def clean:
+      tostring
+      | gsub("[\r\n\t]+"; " ")
+      | gsub("  +"; " ");
+    def trunc($max):
+      clean as $text
+      | if ($text | length) > $max then ($text[0:($max - 3)] + "...") else $text end;
+    def loc(f):
+      (f.file // "?") + ":" + ((f.line // 0) | tostring);
+    def inline($value; $max):
+      ($value // "" | trunc($max) | gsub("`"; ""));
     def card(lbl; f):
       { type: "section", text: { type: "mrkdwn",
-          text: ("*" + lbl + "* | `" + (f.category // "issue") + "` | `" + (f.file // "?") + ":" + ((f.line // 0) | tostring) + "`\n"
-                 + "*Problem:* " + (f.problem // "") + "\n"
-                 + "*Schema:* " + (f.schema_evidence // "-") + "\n"
-                 + "*Suggestion:* " + (f.suggestion // "")) } };
+          text: ("*" + lbl + "* `" + (f.category // "issue") + "` at `" + loc(f) + "`\n"
+                 + (if ((f.code_snippet // "") | length) > 0 then ("*Code:* `" + inline(f.code_snippet; 180) + "`\n") else "" end)
+                 + "*Problem:* " + ((f.problem // "No problem text provided.") | trunc(420)) + "\n"
+                 + "*Fix:* " + ((f.suggestion // "Check the CI logs for the full recommendation.") | trunc(260))) } };
     ( [ (.errors // [])[] | { l: "ERROR", f: . } ]
       + [ (.warnings // [])[] | { l: "WARNING", f: . } ] ) as $all
-    | ($all[0:18]) as $shown
-    | [ $shown[] | card(.l; .f), { type: "divider" } ]
-      + (if ($all | length) > 18
+    | ($all[0:6]) as $shown
+    | if ($all | length) == 0 then
+        [ { type: "section", text: { type: "mrkdwn", text: "*Result*\nNo schema issues found." } } ]
+      else
+        [ { type: "section", text: { type: "mrkdwn", text: "*Top findings*" } } ]
+        + [ $shown[] | card(.l; .f) ]
+        + (if ($all | length) > 6
+           then [ { type: "context", elements: [ { type: "mrkdwn",
+                    text: ("Showing 6 of " + (($all | length) | tostring) + " findings. See CI logs for the full verdict.") } ] } ]
+           else [] end)
+      end
+      + (if ((.summary // "") | length) > 0
          then [ { type: "context", elements: [ { type: "mrkdwn",
-                  text: ("There are " + ((($all | length) - 18) | tostring) + " more findings. See the CI logs for the full verdict.") } ] } ]
+                  text: ("Reviewer summary: " + ((.summary // "") | trunc(360))) } ] } ]
          else [] end)
   ' "$VERDICT_FILE")
   blocks=$(jq -n --argjson a "$blocks" --argjson i "$intro" --argjson c "$cards" '$a + $i + $c')
@@ -90,7 +129,7 @@ if [ "$STATUS" = "warning" ]; then
   blocks=$(jq -n --argjson a "$blocks" --argjson b "$actions" '$a + $b')
 fi
 
-payload=$(jq -n --arg ch "$SLACK_CHANNEL" --arg fb "$HEADER" --argjson blocks "$blocks" \
+payload=$(jq -n --arg ch "$SLACK_CHANNEL" --arg fb "$FALLBACK" --argjson blocks "$blocks" \
   '{ channel: $ch, text: $fb, blocks: $blocks }')
 
 resp=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
