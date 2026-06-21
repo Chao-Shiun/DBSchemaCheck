@@ -157,13 +157,13 @@ notify_slack "$status"
 
 case "$status" in
   pass)
-    echo "Schema review passed."
+    echo "DB schema gate passed."
     ;;
   warning)
-    echo "Schema review produced warnings; bot requested changes until Slack approval."
+    echo "DB schema gate produced warnings; bot requested changes until Slack approval."
     ;;
   error)
-    echo "Schema review produced errors; failing the pipeline."
+    echo "DB schema gate failed: schema review produced errors. This is not a compile/build failure."
     exit 1
     ;;
 esac

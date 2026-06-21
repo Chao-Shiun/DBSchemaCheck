@@ -7,7 +7,7 @@ pipelines:
   pull-requests:
     "**":
       - step:
-          name: DB schema review when reviewer is selected
+          name: DB schema gate (reviewer-triggered)
           caches:
             - node
           script:
