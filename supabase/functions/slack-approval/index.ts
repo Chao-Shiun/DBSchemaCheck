@@ -1,7 +1,7 @@
 // Supabase Edge Function: Slack interactivity endpoint for schema-gate approvals.
 //
 // Bitbucket is the default path and applies the Slack decision directly as the configured bot reviewer:
-// approve clears the bot's change request and approves the PR; reject requests changes.
+// approve clears the bot's change request and approves the PR; reject declines the PR.
 // GitHub mode keeps the original repository_dispatch flow only when provider=github is explicit.
 import { createHmac } from "node:crypto";
 
@@ -191,12 +191,26 @@ async function applyBitbucketDecision(repo: string, decision: Decision, pr: stri
 
   const source = current.data?.source as Record<string, unknown> | undefined;
   const commit = source?.commit as Record<string, unknown> | undefined;
+  const state = String(current.data?.state ?? "");
   const currentHash = String(commit?.hash ?? "");
   if (!commitHashesMatch(sha, currentHash)) {
     return {
       ok: false,
       status: 409,
       detail: `PR head changed from ${shortHash(sha)} to ${shortHash(currentHash)}; rerun the schema check`,
+      url: baseUrl,
+    };
+  }
+
+  if (state && state !== "OPEN") {
+    if (decision === "reject" && state === "DECLINED") {
+      return { ok: true, status: 200, detail: "Bitbucket already declined this PR", url: baseUrl };
+    }
+
+    return {
+      ok: false,
+      status: 409,
+      detail: `PR is ${state.toLowerCase()}; no schema gate decision was changed`,
       url: baseUrl,
     };
   }
@@ -209,7 +223,9 @@ async function applyBitbucketDecision(repo: string, decision: Decision, pr: stri
 
   const clearApproval = await deleteOptional(`${baseUrl}/approve`, headers);
   if (!clearApproval.ok) return clearApproval;
-  return await postDecision(`${baseUrl}/request-changes`, headers, "Bitbucket already has this request-changes decision");
+  const clearChangeRequest = await deleteOptional(`${baseUrl}/request-changes`, headers);
+  if (!clearChangeRequest.ok) return clearChangeRequest;
+  return await postJson(`${baseUrl}/decline`, headers);
 }
 
 async function updateSlackMessage(responseUrl: string, text: string) {
@@ -275,7 +291,7 @@ async function processDecision(payload: Record<string, unknown>) {
   if (decision === "approve") {
     await updateSlackMessage(responseUrl, `:white_check_mark: <@${userId}> approved the schema warning. ${providerLabel(provider)} has been updated for \`${repo}@${sha.slice(0, 7)}\`.`);
   } else {
-    await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> rejected the schema warning. ${providerLabel(provider)} now requests changes for \`${repo}@${sha.slice(0, 7)}\`.`);
+    await updateSlackMessage(responseUrl, `:no_entry: <@${userId}> rejected the schema warning. ${providerLabel(provider)} declined PR #${pr} for \`${repo}@${sha.slice(0, 7)}\`.`);
   }
 }
 

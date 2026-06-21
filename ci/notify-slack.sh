@@ -51,7 +51,7 @@ if [ -f "$VERDICT_FILE" ]; then
       else "Passed"
       end;
     def action:
-      if $status == "error" then "Reviewer requested changes"
+      if $status == "error" then "PR declined"
       elif $status == "warning" then "Reviewer holds PR until approval"
       else "Reviewer approved"
       end;

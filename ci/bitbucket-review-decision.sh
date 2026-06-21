@@ -48,8 +48,9 @@ case "$STATUS" in
     ;;
   error)
     bb_delete_optional "/approve"
-    bb_post "/request-changes"
-    echo "Bitbucket reviewer decision: changes requested"
+    bb_delete_optional "/request-changes"
+    bb_post "/decline"
+    echo "Bitbucket reviewer decision: pull request declined"
     ;;
   *)
     echo "unknown status: $STATUS" >&2

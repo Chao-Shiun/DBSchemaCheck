@@ -73,7 +73,7 @@ public async Task AddLongNoteAsync(long paymentId, string longNote)
 Expected result:
 
 - GitHub: `schema-gate=pending`, Slack `WARNING` with approve/reject buttons.
-- Bitbucket: bot reviewer requests changes first; Slack approval changes the bot reviewer decision to approve or request changes.
+- Bitbucket: bot reviewer requests changes first; Slack approval approves the PR, while Slack reject declines the PR.
 
 ## C. PASS
 
