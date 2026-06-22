@@ -15,6 +15,10 @@ Focus on two outcomes:
 ## Inputs available to you
 
 - `pr.diff` - the unified diff of changed files under `src/` (read it with the Read tool).
+- `ci/live-schema.json` - a live schema snapshot generated in the current CI run by
+  `ci/mcp-toolbox-snapshot.mjs` through MCP Toolbox for Databases over stdio. This is valid
+  live PostgreSQL/Supabase schema evidence when direct MCP tools are not exposed inside Claude
+  Code.
 - The live PostgreSQL/Supabase schema through MCP Toolbox for Databases:
   - Prefer the PostgreSQL prebuilt tool names exposed by Claude as
     `mcp__toolbox__postgres_*`.
@@ -38,17 +42,19 @@ Focus on two outcomes:
    usage, parameters (`AddWithValue`, `NpgsqlParameter`, anonymous objects, `DynamicParameters`),
    table names, column names, inserted/updated values, filters, joins, ordering, grouping,
    limits, model / `DataReader` mappings, and status/check/enum values.
-2. For each touched object, use the MCP Toolbox tools to fetch the real live schema from
-   Supabase. Do not fall back to `db/schema.sql` or any local schema file. Verify table and
-   column names, data types, lengths, nullability, defaults, identity/generated columns, CHECK
-   constraints, primary keys, unique constraints, foreign keys, and indexes.
+2. For each touched object, fetch or read the real live schema from Supabase through MCP
+   Toolbox. Prefer direct MCP Toolbox tools. If those tools are not exposed in Claude Code,
+   read `ci/live-schema.json` instead; that file is produced by MCP Toolbox in the same CI run.
+   Do not fall back to `db/schema.sql` or any local schema file. Verify table and column names,
+   data types, lengths, nullability, defaults, identity/generated columns, CHECK constraints,
+   primary keys, unique constraints, foreign keys, and indexes.
 3. Reason about runtime behavior against the live schema, then separately reason about query,
    Dapper, and ADO.NET performance.
 4. Use `postgres_get_query_plan` for changed queries when index usage is not obvious, or when
    the query adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk
    access.
-5. If MCP Toolbox tools are unavailable or cannot read the live schema, report an `internal`
-   error in `errors` instead of reviewing against a local schema file.
+5. If neither direct MCP Toolbox tools nor `ci/live-schema.json` can provide the live schema,
+   report an `internal` error in `errors` instead of reviewing against a local schema file.
 
 ## Error checks - execution failures or security risks
 

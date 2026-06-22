@@ -146,7 +146,7 @@ fi
 echo "----- changed source diff -----"
 head -n 200 pr.diff || true
 
-rm -f verdict.json toolbox mcp_init.json
+rm -f verdict.json toolbox mcp_init.json ci/live-schema.json
 
 echo "Downloading MCP Toolbox for Databases v${TOOLBOX_VERSION}..."
 curl -fsSL -o toolbox "https://storage.googleapis.com/mcp-toolbox-for-databases/v${TOOLBOX_VERSION}/linux/amd64/toolbox"
@@ -181,20 +181,26 @@ jq -n \
 chmod 600 ci/mcp-config.runtime.json
 echo "MCP Toolbox configured through ci/mcp-config.runtime.json with prebuilt postgres tools and explicit PostgreSQL env."
 
-if ! command -v claude >/dev/null 2>&1; then
-  npm install -g @anthropic-ai/claude-code
+if ! node ci/mcp-toolbox-snapshot.mjs "$toolbox_path" ci/live-schema.json; then
+  printf '%s' '{"summary":"MCP Toolbox live schema snapshot failed","errors":[{"category":"internal","file":"ci/mcp-config.runtime.json","line":1,"code_snippet":"toolbox --prebuilt postgres --stdio","problem":"MCP Toolbox could not produce a live PostgreSQL schema snapshot before the AI review step.","schema_evidence":"ci/live-schema.json was not generated from MCP Toolbox.","suggestion":"check the MCP Toolbox snapshot logs; verify POSTGRES_* variables, Supabase pooler network access, and toolbox stdio startup"}],"warnings":[]}' > verdict.json
 fi
 
-set +e
-env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the MCP Toolbox tools configured by ci/mcp-config.runtime.json to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
-  --mcp-config ci/mcp-config.runtime.json \
-  --model "$CLAUDE_MODEL" \
-  --allowedTools "mcp__toolbox__*,mcp__toolbox__postgres_list_schemas,mcp__toolbox__postgres_list_tables,mcp__toolbox__postgres_list_indexes,mcp__toolbox__postgres_list_views,mcp__toolbox__postgres_execute_sql,mcp__toolbox__postgres_sql,mcp__toolbox__postgres_get_query_plan,mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
-claude_exit=$?
-set -e
+if [ ! -f verdict.json ]; then
+  if ! command -v claude >/dev/null 2>&1; then
+    npm install -g @anthropic-ai/claude-code
+  fi
 
-if [ "$claude_exit" -ne 0 ]; then
-  echo "Claude schema review exited with status ${claude_exit}; verdict.json will decide the gate if present." >&2
+  set +e
+  env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Prefer the MCP Toolbox tools configured by ci/mcp-config.runtime.json to introspect the live PostgreSQL schema from Supabase. If those tools are not exposed inside Claude Code, use ci/live-schema.json instead; that file was generated in this CI run by ci/mcp-toolbox-snapshot.mjs through MCP Toolbox over stdio. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
+    --mcp-config ci/mcp-config.runtime.json \
+    --model "$CLAUDE_MODEL" \
+    --allowedTools "mcp__toolbox__*,mcp__toolbox__postgres_list_schemas,mcp__toolbox__postgres_list_tables,mcp__toolbox__postgres_list_indexes,mcp__toolbox__postgres_list_views,mcp__toolbox__postgres_execute_sql,mcp__toolbox__postgres_sql,mcp__toolbox__postgres_get_query_plan,mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
+  claude_exit=$?
+  set -e
+
+  if [ "$claude_exit" -ne 0 ]; then
+    echo "Claude schema review exited with status ${claude_exit}; verdict.json will decide the gate if present." >&2
+  fi
 fi
 
 if [ ! -f verdict.json ]; then
