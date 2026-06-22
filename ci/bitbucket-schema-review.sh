@@ -166,6 +166,7 @@ jq -n \
       toolbox: {
         command: $command,
         args: ["--prebuilt", "postgres", "--stdio"],
+        alwaysLoad: true,
         env: {
           POSTGRES_HOST: $host,
           POSTGRES_PORT: $port,
@@ -188,7 +189,7 @@ set +e
 env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the MCP Toolbox tools configured by ci/mcp-config.runtime.json to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
   --mcp-config ci/mcp-config.runtime.json \
   --model "$CLAUDE_MODEL" \
-  --allowedTools "mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
+  --allowedTools "mcp__toolbox__*,mcp__toolbox__postgres_list_schemas,mcp__toolbox__postgres_list_tables,mcp__toolbox__postgres_list_indexes,mcp__toolbox__postgres_list_views,mcp__toolbox__postgres_execute_sql,mcp__toolbox__postgres_sql,mcp__toolbox__postgres_get_query_plan,mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
 claude_exit=$?
 set -e
 

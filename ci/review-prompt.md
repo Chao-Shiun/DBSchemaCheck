@@ -16,13 +16,20 @@ Focus on two outcomes:
 
 - `pr.diff` - the unified diff of changed files under `src/` (read it with the Read tool).
 - The live PostgreSQL/Supabase schema through MCP Toolbox for Databases:
-  - `mcp__toolbox__list_schemas` - schemas in the database.
-  - `mcp__toolbox__list_tables` - tables with columns, types, nullability, constraints.
-  - `mcp__toolbox__list_indexes` - existing indexes.
-  - `mcp__toolbox__list_views` - views.
-  - `mcp__toolbox__execute_sql` - run read-only metadata queries against `information_schema`
-    or `pg_catalog` when the list tools do not give enough detail.
-  - `mcp__toolbox__get_query_plan` - EXPLAIN a query without executing it.
+  - Prefer the PostgreSQL prebuilt tool names exposed by Claude as
+    `mcp__toolbox__postgres_*`.
+  - `mcp__toolbox__postgres_list_schemas` - schemas in the database.
+  - `mcp__toolbox__postgres_list_tables` - tables with columns, types, nullability,
+    constraints.
+  - `mcp__toolbox__postgres_list_indexes` - existing indexes.
+  - `mcp__toolbox__postgres_list_views` - views.
+  - `mcp__toolbox__postgres_execute_sql` or `mcp__toolbox__postgres_sql` - run read-only
+    metadata queries against `information_schema` or `pg_catalog` when the list tools do
+    not give enough detail.
+  - `mcp__toolbox__postgres_get_query_plan` - EXPLAIN a query without executing it.
+  - If the runtime exposes non-prefixed aliases such as `mcp__toolbox__list_tables`, those
+    aliases are also acceptable, but do not wait on aliases if the `postgres_*` tools are
+    available.
 
 ## Method
 
@@ -37,8 +44,9 @@ Focus on two outcomes:
    constraints, primary keys, unique constraints, foreign keys, and indexes.
 3. Reason about runtime behavior against the live schema, then separately reason about query,
    Dapper, and ADO.NET performance.
-4. Use `get_query_plan` for changed queries when index usage is not obvious, or when the query
-   adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk access.
+4. Use `postgres_get_query_plan` for changed queries when index usage is not obvious, or when
+   the query adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk
+   access.
 5. If MCP Toolbox tools are unavailable or cannot read the live schema, report an `internal`
    error in `errors` instead of reviewing against a local schema file.
 
@@ -96,7 +104,8 @@ Check data-access usage (Dapper OR raw ADO.NET / Npgsql) against documented beha
   (non-sargable), causing a sequential scan on large tables. Fix: make the parameter type match
   the column exactly (ADO.NET `NpgsqlDbType`/size, Dapper `DbString`/`DbType`) and stop wrapping
   indexed columns in functions/casts. This covers both the query side (`cast`/`lower` on the
-  column) and the parameter side (mis-typed parameter). Confirm with `get_query_plan` when unsure;
+  column) and the parameter side (mis-typed parameter). Confirm with `postgres_get_query_plan`
+  when unsure;
 - use scalar/single-row APIs when the changed query expects one value or one row: Dapper
   `ExecuteScalarAsync<T>` / `QuerySingle*` / `QueryFirst*`; ADO.NET `ExecuteScalar` /
   `ExecuteNonQuery`;
