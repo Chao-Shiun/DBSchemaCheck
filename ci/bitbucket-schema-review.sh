@@ -10,7 +10,7 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 : "${BITBUCKET_BRANCH:?BITBUCKET_BRANCH is required}"
 : "${BITBUCKET_COMMIT:?BITBUCKET_COMMIT is required}"
 : "${BITBUCKET_PR_DESTINATION_BRANCH:?BITBUCKET_PR_DESTINATION_BRANCH is required}"
-DB_CHECK_REVIEWER_WAIT_ATTEMPTS="${DB_CHECK_REVIEWER_WAIT_ATTEMPTS:-6}"
+DB_CHECK_REVIEWER_WAIT_ATTEMPTS="${DB_CHECK_REVIEWER_WAIT_ATTEMPTS:-12}"
 DB_CHECK_REVIEWER_WAIT_SECONDS="${DB_CHECK_REVIEWER_WAIT_SECONDS:-10}"
 selector_configured=false
 for selector in DB_CHECK_REVIEWER_UUID DB_CHECK_REVIEWER_ACCOUNT_ID DB_CHECK_REVIEWER_NICKNAME DB_CHECK_REVIEWER_DISPLAY_NAME; do
@@ -65,6 +65,17 @@ fetch_pr_json() {
     -H "Accept: application/json"
 }
 
+describe_pr_reviewers() {
+  local pr_json="${1:?pr_json required}"
+  printf '%s' "$pr_json" | jq -r '
+    if ((.reviewers // []) | length) == 0 then
+      "Current PR reviewers from API: <none>"
+    else
+      "Current PR reviewers from API:\n" + ((.reviewers // []) | map("- display_name=\(.display_name // "-"), nickname=\(.nickname // "-"), account_id=\(.account_id // "-"), uuid=\(.uuid // "-")") | join("\n"))
+    end
+  '
+}
+
 has_db_check_reviewer() {
   local pr_json="${1:?pr_json required}"
   local uuid account_id nickname display_name
@@ -81,12 +92,15 @@ has_db_check_reviewer() {
 }
 
 reviewer_selected=false
+echo "DB-check reviewer selector status: uuid=$([ -n "${DB_CHECK_REVIEWER_UUID:-}" ] && echo configured || echo empty), account_id=$([ -n "${DB_CHECK_REVIEWER_ACCOUNT_ID:-}" ] && echo configured || echo empty), nickname=$([ -n "${DB_CHECK_REVIEWER_NICKNAME:-}" ] && echo configured || echo empty), display_name=$([ -n "${DB_CHECK_REVIEWER_DISPLAY_NAME:-}" ] && echo configured || echo empty)."
 for attempt in $(seq 1 "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS"); do
   pr_json="$(fetch_pr_json)"
   if has_db_check_reviewer "$pr_json"; then
     reviewer_selected=true
     break
   fi
+
+  describe_pr_reviewers "$pr_json"
 
   if [ "$attempt" -lt "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS" ]; then
     echo "DB-check reviewer is not visible yet on PR #${BITBUCKET_PR_ID}; retrying in ${DB_CHECK_REVIEWER_WAIT_SECONDS}s (${attempt}/${DB_CHECK_REVIEWER_WAIT_ATTEMPTS})."
@@ -95,7 +109,7 @@ for attempt in $(seq 1 "$DB_CHECK_REVIEWER_WAIT_ATTEMPTS"); do
 done
 
 if [ "$reviewer_selected" != "true" ]; then
-  echo "DB-check reviewer is not selected on PR #${BITBUCKET_PR_ID} after ${DB_CHECK_REVIEWER_WAIT_ATTEMPTS} attempt(s); skipping schema review."
+  echo "DB-check reviewer is not selected on PR #${BITBUCKET_PR_ID} after ${DB_CHECK_REVIEWER_WAIT_ATTEMPTS} attempt(s); skipping schema review. If DB Checker is visible in the UI, compare the API reviewer values above with DB_CHECK_REVIEWER_* repository variables."
   exit 0
 fi
 
