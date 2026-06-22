@@ -80,4 +80,30 @@ public sealed class PaymentRepository
         var rows = await connection.QueryAsync<Payment>(sql, new { ids });
         return rows.ToList();
     }
+
+    // Deliberate warning demo: Dapper materializes full Payment objects when only IDs are needed.
+    public async Task<IReadOnlyList<long>> GetPaymentIdsWithOverMappedDapperRowsAsync(long userId)
+    {
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where user_id = @userId order by created_at desc";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { userId });
+        return rows.Select(payment => payment.Id).ToList();
+    }
+
+    // Deliberate warning demo: applying lower() to status prevents normal use of idx_payments_status.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsByStatusWithLoweredColumnAsync(string status)
+    {
+        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where lower(status) = lower(@status) order by created_at desc";
+        await using var connection = CreateConnection();
+        var rows = await connection.QueryAsync<Payment>(sql, new { status });
+        return rows.ToList();
+    }
+
+    // Deliberate warning demo: payments.note is varchar(50), but the parameter is not length-limited.
+    public async Task UpdatePaymentNoteWithoutLengthLimitAsync(long paymentId, string note)
+    {
+        const string sql = "update payments set note = @note where id = @paymentId";
+        await using var connection = CreateConnection();
+        await connection.ExecuteAsync(sql, new { paymentId, note });
+    }
 }
