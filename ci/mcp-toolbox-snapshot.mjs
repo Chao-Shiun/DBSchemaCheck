@@ -52,6 +52,27 @@ child.stdout.on("data", data => {
 
 function drainMessages() {
   while (true) {
+    if (stdoutBuffer.length === 0) {
+      return;
+    }
+
+    if (!stdoutBuffer.toString("utf8", 0, Math.min(stdoutBuffer.length, 15)).startsWith("Content-Length:")) {
+      const newline = stdoutBuffer.indexOf("\n");
+      if (newline < 0) {
+        return;
+      }
+
+      const line = stdoutBuffer.subarray(0, newline).toString("utf8").trim();
+      stdoutBuffer = stdoutBuffer.subarray(newline + 1);
+      if (line.length === 0) {
+        continue;
+      }
+
+      const message = JSON.parse(line);
+      handleMessage(message);
+      continue;
+    }
+
     const separator = stdoutBuffer.indexOf("\r\n\r\n");
     if (separator < 0) {
       return;
@@ -95,9 +116,7 @@ function handleMessage(message) {
 }
 
 function sendMessage(message) {
-  const body = Buffer.from(JSON.stringify(message), "utf8");
-  child.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
-  child.stdin.write(body);
+  child.stdin.write(`${JSON.stringify(message)}\n`);
 }
 
 function request(method, params = {}, timeoutMs = 30000) {
