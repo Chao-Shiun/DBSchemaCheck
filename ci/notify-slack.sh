@@ -78,9 +78,9 @@ if [ -f "$VERDICT_FILE" ]; then
       (f.file // "?") + ":" + ((f.line // 0) | tostring);
     def inline($value; $max):
       ($value // "" | trunc($max) | gsub("`"; ""));
-    def card(lbl; f):
+    def card(n; lbl; f):
       { type: "section", text: { type: "mrkdwn",
-          text: ("*" + lbl + "* `" + (f.category // "issue") + "` at `" + loc(f) + "`\n\n"
+          text: ("*" + ((n + 1) | tostring) + ". " + lbl + "* `" + (f.category // "issue") + "` at `" + loc(f) + "`\n\n"
                  + (if ((f.code_snippet // "") | length) > 0 then ("*Code:*\n`" + inline(f.code_snippet; 180) + "`\n\n") else "" end)
                  + "*Problem:*\n" + ((f.problem // "No problem text provided.") | trunc(420)) + "\n\n"
                  + "*Suggested fix:*\n" + ((f.suggestion // "Check the CI logs for the full recommendation.") | trunc(260))) } };
@@ -91,7 +91,7 @@ if [ -f "$VERDICT_FILE" ]; then
         [ { type: "section", text: { type: "mrkdwn", text: "*Result*\nNo schema issues found." } } ]
       else
         [ { type: "section", text: { type: "mrkdwn", text: "*Top findings*" } } ]
-        + [ $shown[] | card(.l; .f) ]
+        + [ $shown | to_entries[] | card(.key; .value.l; .value.f) ]
         + (if ($all | length) > 6
            then [ { type: "context", elements: [ { type: "mrkdwn",
                     text: ("Showing 6 of " + (($all | length) | tostring) + " findings. See CI logs for the full verdict.") } ] } ]
