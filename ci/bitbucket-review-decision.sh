@@ -14,9 +14,16 @@ API_BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BI
 
 bb_post() {
   local path="${1:?path required}"
-  curl -fsS -X POST "${API_BASE}${path}" \
+  local status_code
+  status_code=$(curl -sS -o /tmp/bitbucket-post-response.txt -w "%{http_code}" -X POST "${API_BASE}${path}" \
     -u "${BITBUCKET_API_USERNAME}:${BITBUCKET_API_TOKEN}" \
-    -H "Accept: application/json" >/dev/null
+    -H "Accept: application/json")
+  if [ "$status_code" -ge 200 ] && [ "$status_code" -lt 300 ]; then
+    return 0
+  fi
+  echo "Bitbucket POST ${path} failed with HTTP ${status_code}." >&2
+  cat /tmp/bitbucket-post-response.txt >&2 || true
+  return 1
 }
 
 bb_delete_optional() {

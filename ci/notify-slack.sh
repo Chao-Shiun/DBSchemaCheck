@@ -6,6 +6,7 @@ STATUS="${1:?status required: pass|warning|error}"
 VERDICT_FILE="${VERDICT_FILE:-verdict.json}"
 SCM_PROVIDER="${SCM_PROVIDER:-github}"
 REVIEW_MODEL="${REVIEW_MODEL:-${CLAUDE_MODEL:-unknown}}"
+BITBUCKET_DECISION_APPLIED="${BITBUCKET_DECISION_APPLIED:-true}"
 
 : "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}"
 : "${SLACK_CHANNEL:?SLACK_CHANNEL is required}"
@@ -41,7 +42,7 @@ if [ -f "$VERDICT_FILE" ]; then
   ERR_COUNT=$(jq '(.errors // []) | length' "$VERDICT_FILE")
   WARN_COUNT=$(jq '(.warnings // []) | length' "$VERDICT_FILE")
   FALLBACK="${HEADER}: ${ERR_COUNT} error(s), ${WARN_COUNT} warning(s)"
-  intro=$(jq -n --arg status "$STATUS" --arg e "$ERR_COUNT" --arg w "$WARN_COUNT" --arg model "$REVIEW_MODEL" '
+  intro=$(jq -n --arg status "$STATUS" --arg e "$ERR_COUNT" --arg w "$WARN_COUNT" --arg model "$REVIEW_MODEL" --arg decision_applied "$BITBUCKET_DECISION_APPLIED" '
     def count_label($n; $singular; $plural):
       ($n | tonumber) as $count
       | (($count | tostring) + " " + (if $count == 1 then $singular else $plural end));
@@ -51,7 +52,8 @@ if [ -f "$VERDICT_FILE" ]; then
       else "Passed"
       end;
     def action:
-      if $status == "error" then "PR declined"
+      if $decision_applied != "true" then "Bitbucket update failed; see CI logs"
+      elif $status == "error" then "PR declined"
       elif $status == "warning" then "Reviewer holds PR until approval"
       else "Reviewer approved"
       end;
