@@ -15,9 +15,14 @@ Focus on two outcomes:
 ## Inputs available to you
 
 - `pr.diff` - the unified diff of changed files under `src/` (read it with the Read tool).
-- `live-schema.json` - the authoritative live PostgreSQL/Supabase metadata snapshot captured
-  by CI from `information_schema`, `pg_catalog`, `pg_indexes`, and `pg_views`.
-  It includes schemas, tables, columns, constraints, indexes, and views.
+- The live PostgreSQL/Supabase schema through MCP Toolbox for Databases:
+  - `mcp__toolbox__list_schemas` - schemas in the database.
+  - `mcp__toolbox__list_tables` - tables with columns, types, nullability, constraints.
+  - `mcp__toolbox__list_indexes` - existing indexes.
+  - `mcp__toolbox__list_views` - views.
+  - `mcp__toolbox__execute_sql` - run read-only metadata queries against `information_schema`
+    or `pg_catalog` when the list tools do not give enough detail.
+  - `mcp__toolbox__get_query_plan` - EXPLAIN a query without executing it.
 
 ## Method
 
@@ -26,14 +31,16 @@ Focus on two outcomes:
    usage, parameters (`AddWithValue`, `NpgsqlParameter`, anonymous objects, `DynamicParameters`),
    table names, column names, inserted/updated values, filters, joins, ordering, grouping,
    limits, model / `DataReader` mappings, and status/check/enum values.
-2. For each touched object, read and use `live-schema.json`. Treat it as the real live schema.
-   Do not fall back to `db/schema.sql`. Verify table and column names, data types, lengths,
-   nullability, defaults, identity/generated columns, CHECK constraints, primary keys, unique
-   constraints, foreign keys, and indexes.
+2. For each touched object, use the MCP Toolbox tools to fetch the real live schema from
+   Supabase. Do not fall back to `db/schema.sql` or any local schema file. Verify table and
+   column names, data types, lengths, nullability, defaults, identity/generated columns, CHECK
+   constraints, primary keys, unique constraints, foreign keys, and indexes.
 3. Reason about runtime behavior against the live schema, then separately reason about query,
    Dapper, and ADO.NET performance.
-4. If `live-schema.json` is missing or unreadable, report an `internal` error in `errors`
-   instead of reviewing against a local schema file.
+4. Use `get_query_plan` for changed queries when index usage is not obvious, or when the query
+   adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk access.
+5. If MCP Toolbox tools are unavailable or cannot read the live schema, report an `internal`
+   error in `errors` instead of reviewing against a local schema file.
 
 ## Error checks - execution failures or security risks
 
@@ -147,7 +154,7 @@ this shape (no markdown, valid JSON only):
   "summary": "one-paragraph plain summary of what was reviewed and the outcome",
   "errors": [
     {
-      "category": "missing_table | missing_column | renamed_column | sql_syntax | sql_injection | dynamic_identifier_injection | mapping_mismatch | reader_type_mismatch | nullable_mapping | type_mismatch | not_null | generated_column | check_enum | length_violation | unique_constraint | foreign_key | datetime_kind_mismatch | undisposed_resource | missing_transaction",
+      "category": "internal | missing_table | missing_column | renamed_column | sql_syntax | sql_injection | dynamic_identifier_injection | mapping_mismatch | reader_type_mismatch | nullable_mapping | type_mismatch | not_null | generated_column | check_enum | length_violation | unique_constraint | foreign_key | datetime_kind_mismatch | undisposed_resource | missing_transaction",
       "file": "src/PaymentDemo/Repositories/PaymentRepository.cs",
       "line": 42,
       "code_snippet": "the offending line or SQL",
