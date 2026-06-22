@@ -75,7 +75,7 @@ supabase functions deploy slack-approval --use-api --no-verify-jwt --project-ref
 $fnTmp = New-TemporaryFile
 try {
   $fnLines = @("SLACK_SIGNING_SECRET=$($vars['SLACK_SIGNING_SECRET'])")
-  foreach ($optionalSecret in @("GH_DISPATCH_TOKEN", "BITBUCKET_API_USERNAME", "BITBUCKET_API_TOKEN", "APPROVER_SLACK_IDS")) {
+  foreach ($optionalSecret in @("BITBUCKET_API_USERNAME", "BITBUCKET_API_TOKEN", "DEFAULT_SCM_PROVIDER", "GH_DISPATCH_TOKEN", "APPROVER_SLACK_IDS")) {
     if ($vars.ContainsKey($optionalSecret) -and -not [string]::IsNullOrWhiteSpace($vars[$optionalSecret])) {
       $fnLines += "$optionalSecret=$($vars[$optionalSecret])"
     }
@@ -87,7 +87,7 @@ try {
 
 Write-Host ""
 Write-Host "Done. Remaining manual steps you must do yourself:"
-Write-Host "  1) GitHub: set CLAUDE_CODE_OAUTH_TOKEN in Actions secrets if you use GitHub Actions."
+Write-Host "  1) GitHub/Bitbucket: set CLAUDE_CODE_OAUTH_TOKEN in CI secrets or repository variables if you use Claude Code subscription auth."
 Write-Host "  2) Bitbucket: set repository variables listed in README if you use Bitbucket Pipelines."
 Write-Host "  3) Slack: set the Interactivity Request URL to your real function URL, Install to Workspace,"
 Write-Host "     then run '/invite @dbschemacheck-gate' in your target Slack channel (SLACK_CHANNEL_ID)."

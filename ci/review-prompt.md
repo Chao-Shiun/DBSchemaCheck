@@ -15,13 +15,25 @@ Focus on two outcomes:
 ## Inputs available to you
 
 - `pr.diff` - the unified diff of changed files under `src/` (read it with the Read tool).
-- The live database schema, via the `toolbox` MCP server (PostgreSQL / Supabase):
-  - `mcp__toolbox__list_tables` - tables with columns, types, nullability, constraints.
-  - `mcp__toolbox__list_indexes` - existing indexes.
-  - `mcp__toolbox__list_views` - views.
-  - `mcp__toolbox__execute_sql` - run read-only queries against metadata tables such as
-    `information_schema` or `pg_catalog` when the other tools do not give enough detail.
-  - `mcp__toolbox__get_query_plan` - EXPLAIN a query without executing it.
+- `ci/live-schema.json` - a live schema snapshot generated in the current CI run by
+  `ci/mcp-toolbox-snapshot.mjs` through MCP Toolbox for Databases over stdio. This is valid
+  live PostgreSQL/Supabase schema evidence when direct MCP tools are not exposed inside Claude
+  Code.
+- The live PostgreSQL/Supabase schema through MCP Toolbox for Databases:
+  - Prefer the PostgreSQL prebuilt tool names exposed by Claude as
+    `mcp__toolbox__postgres_*`.
+  - `mcp__toolbox__postgres_list_schemas` - schemas in the database.
+  - `mcp__toolbox__postgres_list_tables` - tables with columns, types, nullability,
+    constraints.
+  - `mcp__toolbox__postgres_list_indexes` - existing indexes.
+  - `mcp__toolbox__postgres_list_views` - views.
+  - `mcp__toolbox__postgres_execute_sql` or `mcp__toolbox__postgres_sql` - run read-only
+    metadata queries against `information_schema` or `pg_catalog` when the list tools do
+    not give enough detail.
+  - `mcp__toolbox__postgres_get_query_plan` - EXPLAIN a query without executing it.
+  - If the runtime exposes non-prefixed aliases such as `mcp__toolbox__list_tables`, those
+    aliases are also acceptable, but do not wait on aliases if the `postgres_*` tools are
+    available.
 
 ## Method
 
@@ -30,13 +42,19 @@ Focus on two outcomes:
    usage, parameters (`AddWithValue`, `NpgsqlParameter`, anonymous objects, `DynamicParameters`),
    table names, column names, inserted/updated values, filters, joins, ordering, grouping,
    limits, model / `DataReader` mappings, and status/check/enum values.
-2. For each touched object, fetch the real live schema with the toolbox tools. Do not assume.
-   Verify table and column names, data types, lengths, nullability, defaults, identity/generated
-   columns, CHECK constraints, primary keys, unique constraints, foreign keys, and indexes.
+2. For each touched object, fetch or read the real live schema from Supabase through MCP
+   Toolbox. Prefer direct MCP Toolbox tools. If those tools are not exposed in Claude Code,
+   read `ci/live-schema.json` instead; that file is produced by MCP Toolbox in the same CI run.
+   Do not fall back to `db/schema.sql` or any local schema file. Verify table and column names,
+   data types, lengths, nullability, defaults, identity/generated columns, CHECK constraints,
+   primary keys, unique constraints, foreign keys, and indexes.
 3. Reason about runtime behavior against the live schema, then separately reason about query,
    Dapper, and ADO.NET performance.
-4. Use `get_query_plan` for changed queries when index usage is not obvious, or when the query
-   adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk access.
+4. Use `postgres_get_query_plan` for changed queries when index usage is not obvious, or when
+   the query adds/changes WHERE, JOIN, ORDER BY, GROUP BY, LIMIT/OFFSET, aggregation, or bulk
+   access.
+5. If neither direct MCP Toolbox tools nor `ci/live-schema.json` can provide the live schema,
+   report an `internal` error in `errors` instead of reviewing against a local schema file.
 
 ## Error checks - execution failures or security risks
 
@@ -92,7 +110,8 @@ Check data-access usage (Dapper OR raw ADO.NET / Npgsql) against documented beha
   (non-sargable), causing a sequential scan on large tables. Fix: make the parameter type match
   the column exactly (ADO.NET `NpgsqlDbType`/size, Dapper `DbString`/`DbType`) and stop wrapping
   indexed columns in functions/casts. This covers both the query side (`cast`/`lower` on the
-  column) and the parameter side (mis-typed parameter). Confirm with `get_query_plan` when unsure;
+  column) and the parameter side (mis-typed parameter). Confirm with `postgres_get_query_plan`
+  when unsure;
 - use scalar/single-row APIs when the changed query expects one value or one row: Dapper
   `ExecuteScalarAsync<T>` / `QuerySingle*` / `QueryFirst*`; ADO.NET `ExecuteScalar` /
   `ExecuteNonQuery`;
@@ -150,7 +169,7 @@ this shape (no markdown, valid JSON only):
   "summary": "one-paragraph plain summary of what was reviewed and the outcome",
   "errors": [
     {
-      "category": "missing_table | missing_column | renamed_column | sql_syntax | sql_injection | dynamic_identifier_injection | mapping_mismatch | reader_type_mismatch | nullable_mapping | type_mismatch | not_null | generated_column | check_enum | length_violation | unique_constraint | foreign_key | datetime_kind_mismatch | undisposed_resource | missing_transaction",
+      "category": "internal | missing_table | missing_column | renamed_column | sql_syntax | sql_injection | dynamic_identifier_injection | mapping_mismatch | reader_type_mismatch | nullable_mapping | type_mismatch | not_null | generated_column | check_enum | length_violation | unique_constraint | foreign_key | datetime_kind_mismatch | undisposed_resource | missing_transaction",
       "file": "src/PaymentDemo/Repositories/PaymentRepository.cs",
       "line": 42,
       "code_snippet": "the offending line or SQL",

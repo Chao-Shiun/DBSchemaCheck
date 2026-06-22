@@ -29,7 +29,7 @@ jobs:
       POSTGRES_DATABASE: ${{ secrets.SUPABASE_DB_NAME }}
       POSTGRES_USER: ${{ secrets.SUPABASE_DB_USER }}
       POSTGRES_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      POSTGRES_QUERY_PARAMS: "sslmode=require"
+      POSTGRES_QUERY_PARAMS: "{sslmode: require}"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,7 +88,7 @@ jobs:
           claude_args: >-
             --mcp-config ci/mcp-config.json
             --model claude-opus-4-8
-            --allowedTools "mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
+            --allowedTools "mcp__toolbox__*,mcp__toolbox__postgres_list_schemas,mcp__toolbox__postgres_list_tables,mcp__toolbox__postgres_list_indexes,mcp__toolbox__postgres_list_views,mcp__toolbox__postgres_execute_sql,mcp__toolbox__postgres_sql,mcp__toolbox__postgres_get_query_plan,mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
 
       - name: Evaluate verdict and decide gate
         id: gate

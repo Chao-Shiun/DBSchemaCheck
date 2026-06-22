@@ -7,6 +7,8 @@ toolbox
 pr.diff
 verdict.json
 ci/mcp-config.runtime.json
+ci/live-schema.json
+mcp_init.json
 
 # Node / Supabase
 node_modules/
