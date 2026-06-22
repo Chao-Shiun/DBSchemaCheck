@@ -151,27 +151,15 @@ rm -f verdict.json toolbox mcp_init.json
 echo "Downloading MCP Toolbox for Databases v${TOOLBOX_VERSION}..."
 curl -fsSL -o toolbox "https://storage.googleapis.com/mcp-toolbox-for-databases/v${TOOLBOX_VERSION}/linux/amd64/toolbox"
 chmod +x toolbox
-toolbox_path="$(pwd)/toolbox"
-echo "MCP Toolbox downloaded to ${toolbox_path}."
+echo "MCP Toolbox configured through ci/mcp-config.json with prebuilt postgres tools."
 
 if ! command -v claude >/dev/null 2>&1; then
   npm install -g @anthropic-ai/claude-code
 fi
 
-claude mcp remove toolbox >/dev/null 2>&1 || true
-claude mcp add toolbox -s local \
-  -e POSTGRES_HOST="$POSTGRES_HOST" \
-  -e POSTGRES_PORT="$POSTGRES_PORT" \
-  -e POSTGRES_DATABASE="$POSTGRES_DATABASE" \
-  -e POSTGRES_USER="$POSTGRES_USER" \
-  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-  -e POSTGRES_QUERY_PARAMS="$POSTGRES_QUERY_PARAMS" \
-  -- "$toolbox_path" --prebuilt postgres --stdio
-echo "MCP Toolbox registered through Claude Code local MCP config."
-claude mcp list || true
-
 set +e
-env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the registered toolbox MCP server to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
+env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the MCP Toolbox tools configured by ci/mcp-config.json to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
+  --mcp-config ci/mcp-config.json \
   --model "$CLAUDE_MODEL" \
   --allowedTools "mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
 claude_exit=$?
@@ -182,7 +170,7 @@ if [ "$claude_exit" -ne 0 ]; then
 fi
 
 if [ ! -f verdict.json ]; then
-  printf '%s' '{"summary":"review did not produce verdict.json","errors":[{"category":"internal","file":"-","line":0,"code_snippet":"-","problem":"verdict.json missing - the AI review step did not write a result","schema_evidence":"MCP Toolbox did not produce a usable schema review result","suggestion":"check the Claude and MCP Toolbox logs; verify POSTGRES_* variables and Claude MCP registration"}],"warnings":[]}' > verdict.json
+  printf '%s' '{"summary":"review did not produce verdict.json","errors":[{"category":"internal","file":"-","line":0,"code_snippet":"-","problem":"verdict.json missing - the AI review step did not write a result","schema_evidence":"MCP Toolbox did not produce a usable schema review result","suggestion":"check the Claude and MCP Toolbox logs; verify POSTGRES_* variables and ci/mcp-config.json"}],"warnings":[]}' > verdict.json
 fi
 
 err_count=$(jq '(.errors // []) | length' verdict.json)
