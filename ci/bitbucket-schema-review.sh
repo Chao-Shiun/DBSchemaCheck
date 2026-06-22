@@ -134,7 +134,16 @@ else
   exit 1
 fi
 
-export POSTGRES_QUERY_PARAMS="${POSTGRES_QUERY_PARAMS:-sslmode=require}"
+# Toolbox prebuilt postgres expects queryParams as a YAML mapping.
+if [ -z "${POSTGRES_QUERY_PARAMS:-}" ]; then
+  POSTGRES_QUERY_PARAMS="{sslmode: require}"
+fi
+if printf '%s' "$POSTGRES_QUERY_PARAMS" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
+  query_param_key="${POSTGRES_QUERY_PARAMS%%=*}"
+  query_param_value="${POSTGRES_QUERY_PARAMS#*=}"
+  POSTGRES_QUERY_PARAMS="{${query_param_key}: ${query_param_value}}"
+fi
+export POSTGRES_QUERY_PARAMS
 
 git fetch origin "${BITBUCKET_PR_DESTINATION_BRANCH}" || true
 if git rev-parse "origin/${BITBUCKET_PR_DESTINATION_BRANCH}" >/dev/null 2>&1; then

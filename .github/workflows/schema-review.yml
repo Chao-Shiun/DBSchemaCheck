@@ -29,7 +29,7 @@ jobs:
       POSTGRES_DATABASE: ${{ secrets.SUPABASE_DB_NAME }}
       POSTGRES_USER: ${{ secrets.SUPABASE_DB_USER }}
       POSTGRES_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      POSTGRES_QUERY_PARAMS: "sslmode=require"
+      POSTGRES_QUERY_PARAMS: "{sslmode: require}"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
