@@ -45,19 +45,19 @@ public sealed class PaymentRepository
         return rows.ToList();
     }
 
-    // Corrected version of the previous syntax-error demo.
-    public async Task<IReadOnlyList<Payment>> GetPaymentsWithFixedSqlAsync(long userId)
+    // Deliberate error demo: payment_reference does not exist in the live payments table.
+    public async Task<IReadOnlyList<Payment>> GetPaymentsWithMissingColumnAsync(long userId)
     {
-        const string sql = "select id, user_id, payment_method_id, amount_cents, currency, status, note, created_at from payments where user_id = @userId";
+        const string sql = "select id, user_id, payment_reference, amount_cents, currency, status, note, created_at from payments where user_id = @userId";
         await using var connection = CreateConnection();
         var rows = await connection.QueryAsync<Payment>(sql, new { userId });
         return rows.ToList();
     }
 
-    // Deliberate warning demo: SELECT * fetches full rows when only payment IDs are needed.
-    public async Task<IReadOnlyList<long>> GetPaymentIdsWithSelectStarAsync(long userId)
+    // Deliberate error demo: payment_audit_logs does not exist in the live schema.
+    public async Task<IReadOnlyList<long>> GetPaymentIdsFromMissingTableAsync(long userId)
     {
-        const string sql = "select * from payments where user_id = @userId order by created_at desc";
+        const string sql = "select payment_id from payment_audit_logs where user_id = @userId";
         await using var connection = CreateConnection();
         var rows = await connection.QueryAsync<long>(sql, new { userId });
         return rows.ToList();
