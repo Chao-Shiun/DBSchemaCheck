@@ -151,15 +151,42 @@ rm -f verdict.json toolbox mcp_init.json
 echo "Downloading MCP Toolbox for Databases v${TOOLBOX_VERSION}..."
 curl -fsSL -o toolbox "https://storage.googleapis.com/mcp-toolbox-for-databases/v${TOOLBOX_VERSION}/linux/amd64/toolbox"
 chmod +x toolbox
-echo "MCP Toolbox configured through ci/mcp-config.json with prebuilt postgres tools."
+toolbox_path="$(pwd)/toolbox"
+"$toolbox_path" --version
+jq -n \
+  --arg command "$toolbox_path" \
+  --arg host "$POSTGRES_HOST" \
+  --arg port "$POSTGRES_PORT" \
+  --arg database "$POSTGRES_DATABASE" \
+  --arg user "$POSTGRES_USER" \
+  --arg password "$POSTGRES_PASSWORD" \
+  --arg queryParams "$POSTGRES_QUERY_PARAMS" \
+  '{
+    mcpServers: {
+      toolbox: {
+        command: $command,
+        args: ["--prebuilt", "postgres", "--stdio"],
+        env: {
+          POSTGRES_HOST: $host,
+          POSTGRES_PORT: $port,
+          POSTGRES_DATABASE: $database,
+          POSTGRES_USER: $user,
+          POSTGRES_PASSWORD: $password,
+          POSTGRES_QUERY_PARAMS: $queryParams
+        }
+      }
+    }
+  }' > ci/mcp-config.runtime.json
+chmod 600 ci/mcp-config.runtime.json
+echo "MCP Toolbox configured through ci/mcp-config.runtime.json with prebuilt postgres tools and explicit PostgreSQL env."
 
 if ! command -v claude >/dev/null 2>&1; then
   npm install -g @anthropic-ai/claude-code
 fi
 
 set +e
-env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the MCP Toolbox tools configured by ci/mcp-config.json to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
-  --mcp-config ci/mcp-config.json \
+env "${claude_env[@]}" claude -p "Read ci/review-prompt.md and follow it exactly. The diff of changed source files is in pr.diff. Use the MCP Toolbox tools configured by ci/mcp-config.runtime.json to introspect the live PostgreSQL schema from Supabase. Do not use db/schema.sql as schema evidence. Write verdict.json at the repository root." \
+  --mcp-config ci/mcp-config.runtime.json \
   --model "$CLAUDE_MODEL" \
   --allowedTools "mcp__toolbox__list_schemas,mcp__toolbox__list_tables,mcp__toolbox__list_indexes,mcp__toolbox__list_views,mcp__toolbox__execute_sql,mcp__toolbox__get_query_plan,Read,Write,Bash(git diff:*),Bash(cat:*)"
 claude_exit=$?
@@ -170,7 +197,7 @@ if [ "$claude_exit" -ne 0 ]; then
 fi
 
 if [ ! -f verdict.json ]; then
-  printf '%s' '{"summary":"review did not produce verdict.json","errors":[{"category":"internal","file":"-","line":0,"code_snippet":"-","problem":"verdict.json missing - the AI review step did not write a result","schema_evidence":"MCP Toolbox did not produce a usable schema review result","suggestion":"check the Claude and MCP Toolbox logs; verify POSTGRES_* variables and ci/mcp-config.json"}],"warnings":[]}' > verdict.json
+  printf '%s' '{"summary":"review did not produce verdict.json","errors":[{"category":"internal","file":"-","line":0,"code_snippet":"-","problem":"verdict.json missing - the AI review step did not write a result","schema_evidence":"MCP Toolbox did not produce a usable schema review result","suggestion":"check the Claude and MCP Toolbox logs; verify POSTGRES_* variables and ci/mcp-config.runtime.json"}],"warnings":[]}' > verdict.json
 fi
 
 err_count=$(jq '(.errors // []) | length' verdict.json)
